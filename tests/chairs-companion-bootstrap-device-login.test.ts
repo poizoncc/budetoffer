@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { COMPANION_ORIGINS } from "../apps/chrome-companion/shared/destinations.ts";
 import { test } from "node:test";
 import { installPairedCompanion } from "../apps/chrome-companion/background/bootstrap.ts";
 import {
@@ -15,7 +16,7 @@ import type {
 import { isRecord } from "../apps/chrome-companion/shared/record.ts";
 import { unavailableExecutionChrome } from "./helpers/chrome.ts";
 
-const ORIGIN = "http://127.0.0.1:6971";
+const ORIGIN = COMPANION_ORIGINS[0];
 const DEVICE_KEY = "chairs-companion-device-v1";
 const CHECKPOINT_KEY = "chairs-companion-checkpoint-v1";
 const legal = {
@@ -225,7 +226,7 @@ test("device login completes on an alarm without a popup, but cannot start HH wo
     userCode: "4GN-5TY",
     verificationUri: `${ORIGIN}/#companion-connect=4GN-5TY`,
     expiresAt: f.stored(LOGIN_KEY).expiresAt,
-    phoneReachable: false,
+    phoneReachable: true,
   });
   assert.ok(!JSON.stringify(result).includes("d".repeat(43)));
   assert.deepEqual(f.alarms.get(LOGIN_ALARM), { periodInMinutes: 0.5 });

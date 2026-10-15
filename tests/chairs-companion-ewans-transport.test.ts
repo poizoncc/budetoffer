@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { COMPANION_ORIGINS } from "../apps/chrome-companion/shared/destinations.ts";
 import { test } from "node:test";
 import { createCompanionTransport } from "../apps/chrome-companion/background/transport.ts";
 import { publicLoginRequest } from "../apps/chrome-companion/background/device-login.ts";
@@ -8,7 +9,7 @@ import {
   resolveCompanionEwans,
 } from "../packages/ewans/src/index.ts";
 
-const origin = "http://127.0.0.1:6971";
+const origin = COMPANION_ORIGINS[0];
 
 for (const status of [401, 403]) {
   test(`HTTP ${status} preserves the worker's authentication decision and adds a safe descriptor`, async () => {

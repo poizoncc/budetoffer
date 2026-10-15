@@ -446,7 +446,17 @@ async function writeCompanionPackage({
   local = false,
 }: PackageOptions) {
   const manifest = local
-    ? await readCompanionManifest()
+    ? {
+        ...(await readCompanionManifest()),
+        name: "BudetOffer Local Companion",
+        description: "Local-only companion for BudetOffer BFF.",
+        host_permissions: [
+          "http://127.0.0.1:6970/*",
+          "http://127.0.0.1:6971/*",
+          "https://hh.ru/*",
+          "https://*.hh.ru/*",
+        ],
+      }
     : await createScopedServerCompanionManifest(origin);
   if (
     typeof outputDir !== "string" ||

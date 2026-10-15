@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { COMPANION_ORIGINS } from "../apps/chrome-companion/shared/destinations.ts";
 import { test } from "node:test";
 import {
   accountMatches,
@@ -200,7 +201,7 @@ test("targeted reconciliation executes only exact read jobs and restores origina
 test("transport bounds requests, omits cookies and refuses redirect/executable paths", async () => {
   let request: RequestInit | undefined;
   const transport = createCompanionTransport({
-    origin: "http://127.0.0.1:6970",
+    origin: COMPANION_ORIGINS[0],
     token: async () => "device-secret",
     fetchImpl: async (_url, options) => {
       request = options;

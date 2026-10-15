@@ -22,9 +22,7 @@ const client: CompanionPopupClient = {
   },
 };
 async function boot() {
-  const publicDestinations = chromePopup.runtime.getURL(
-    "shared/destinations.js",
-  );
+  const publicDestinations = chromePopup.runtime.getURL("shared/config.js");
   const destinations: unknown = await import(
     /* @vite-ignore */ publicDestinations
   );

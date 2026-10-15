@@ -1,4 +1,4 @@
-import { COMPANION_ORIGINS } from "../shared/destinations.ts";
+import { COMPANION_ORIGINS } from "../shared/config.ts";
 import { parseCompanionJob } from "../shared/companion-protocol.ts";
 import { isRecord } from "../shared/record.ts";
 import type { CompanionTransport } from "../shared/companion-protocol.ts";

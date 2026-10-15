@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { COMPANION_ORIGINS } from "../apps/chrome-companion/shared/destinations.ts";
 import { test } from "node:test";
 import { createCheckpointStore } from "../apps/chrome-companion/background/checkpoint-store.ts";
 import { createCompanionTransport } from "../apps/chrome-companion/background/transport.ts";
@@ -53,7 +54,7 @@ test("malformed leased JSON is rejected before it can become worker authority", 
     { ...job, reconcileOriginal: { phase: "authorized" } },
   ]) {
     const transport = createCompanionTransport({
-      origin: "http://127.0.0.1:6970",
+      origin: COMPANION_ORIGINS[0],
       token: async () => "synthetic-access-token",
       fetchImpl: async () => Response.json({ job: value }),
     });

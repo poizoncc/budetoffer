@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { COMPANION_ORIGINS } from "../apps/chrome-companion/shared/destinations.ts";
 import { test } from "node:test";
 import { installPairedCompanion } from "../apps/chrome-companion/background/bootstrap.ts";
 import type {
@@ -84,7 +85,7 @@ test("paired bootstrap retains secret only in trusted storage and sends no cooki
   // Startup checks are bounded and complete before pairing.
   await new Promise((resolve) => setImmediate(resolve));
   const status = await fixtureValue.worker.pair({
-    origin: "http://127.0.0.1:6971",
+    origin: COMPANION_ORIGINS[0],
     code: "a".repeat(43),
     label: "Test",
   });
@@ -147,7 +148,7 @@ test("replacement pairing preserves uncertainty and requests only owner-scoped r
     payloadHash: "a".repeat(64),
   };
   await f.worker.pair({
-    origin: "http://127.0.0.1:6971",
+    origin: COMPANION_ORIGINS[0],
     code: "a".repeat(43),
     label: "Test",
   });
@@ -180,10 +181,10 @@ test("only owner-authenticated terminal recovery clears an expired-device checkp
     leaseToken: "old",
     payloadHash: "a".repeat(64),
     deviceId: "expired",
-    origin: "http://127.0.0.1:6971",
+    origin: COMPANION_ORIGINS[0],
   };
   await f.worker.pair({
-    origin: "http://127.0.0.1:6971",
+    origin: COMPANION_ORIGINS[0],
     code: "a".repeat(43),
     label: "Replacement",
   });

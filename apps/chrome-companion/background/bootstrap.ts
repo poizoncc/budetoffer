@@ -3,7 +3,7 @@ import { createCheckpointStore } from "./checkpoint-store.ts";
 import { createCompanionWorker } from "./service-worker.ts";
 import { createChromeExecution } from "./execution.ts";
 import { createPackagedApplicationExecutor } from "./application-execution.ts";
-import { COMPANION_ORIGINS } from "../shared/destinations.ts";
+import { COMPANION_ORIGINS } from "../shared/config.ts";
 import { COMPANION_ONBOARDING } from "../shared/onboarding.ts";
 import {
   ONBOARDING_KEY,
