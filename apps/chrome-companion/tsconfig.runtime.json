@@ -6,7 +6,7 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["chrome"],
     "rewriteRelativeImportExtensions": true,
-    "rootDir": ".",
+    "rootDir": "../..",
     "noEmitOnError": true,
     "noEmit": false
   },

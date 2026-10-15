@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { resolveCompanionEwans } from "@/shared/api/ewans";
 import {
   DEVICE_CODE_PATTERN,
   displayDeviceCode,
@@ -19,6 +20,23 @@ const CHECK_ERROR =
   "Не удалось связаться с расширением. Повторите проверку подключения.";
 const ACTION_ERROR =
   "Ответ не получен. Проверьте подключение перед повтором действия.";
+// Older workers return these local constants instead of a coded descriptor.
+// Arbitrary runtime/server strings are never rendered as fallback messages.
+const LEGACY_WORKER_ERRORS = new Set([
+  "Не удалось изменить подключение. Проверьте код и состояние заданий в приложении.",
+  "Сервер недоступен. Проверьте подключение и включённый компьютер. Фоновая проверка повторится автоматически.",
+  "Код входа истёк. Получите новый код в расширении.",
+  "Подключение расширения отозвано или срок входа истёк. Войдите снова; незавершённые задания сохраняются для сверки.",
+]);
+
+function workerProblem(
+  status: CompanionStatus,
+  legacy: string | undefined,
+): string {
+  if (status.ewans) return resolveCompanionEwans(status.ewans);
+  if (legacy && LEGACY_WORKER_ERRORS.has(legacy)) return legacy;
+  return "Не удалось проверить подключение. Повторите проверку.";
+}
 type CompanionChangeArguments =
   | [type: "chairs:pair-device", options: { code: string }]
   | [type: Exclude<CompanionMessage["type"], "chairs:pair-device">];
@@ -54,7 +72,9 @@ function connectionMessage(
 }
 
 function statusProblem(status: CompanionStatus, origin: string): string {
-  if (!status.ok) return status.error || "Не удалось проверить подключение.";
+  if (!status.ok) {
+    return workerProblem(status, status.error);
+  }
   if (typeof status.paired !== "boolean") {
     return "Расширение не подтвердило состояние подключения. Повторите проверку.";
   }
@@ -169,11 +189,17 @@ export function useCompanionConnection({
   const apply = useCallback(
     (next: CompanionStatus) => {
       const problem = statusProblem(next, config.origin);
+      const status = next.backgroundError
+        ? {
+            ...next,
+            backgroundError: workerProblem(next, next.backgroundError),
+          }
+        : next;
       setNow(Date.now());
       setSnapshot((previous) =>
         problem
           ? { ...previous, error: problem, unavailable: true }
-          : { status: next, error: "", unavailable: false },
+          : { status, error: "", unavailable: false },
       );
       return !problem;
     },

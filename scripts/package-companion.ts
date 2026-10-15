@@ -9,7 +9,7 @@ import {
   rm,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, posix, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { strToU8, zipSync } from "fflate";
 import ts from "typescript";
@@ -295,6 +295,74 @@ export async function createScopedServerCompanionManifest(origin: unknown) {
   };
 }
 
+function runtimeArchivePath(name: string): string {
+  const prefix = "apps/chrome-companion/";
+  if (name.startsWith(prefix)) {
+    const local = name.slice(prefix.length);
+    if (/^(?:background|hh|shared|popup)\/[a-z0-9-]+\.js$/u.test(local)) {
+      return local;
+    }
+  }
+  if (name === "packages/ewans/src/index.js") return "shared/ewans.js";
+  throw new Error("unexpected_companion_runtime_file");
+}
+
+/** Relocate only module specifiers; injected function bodies remain untouched. */
+function relocateRuntimeImports(content: string, name: string): string {
+  const module = ts.createSourceFile(
+    name,
+    content,
+    ts.ScriptTarget.ES2022,
+    true,
+    ts.ScriptKind.JS,
+  );
+  const changes: { start: number; end: number; value: string }[] = [];
+  function rewrite(specifier: ts.StringLiteralLike) {
+    if (!specifier.text.startsWith(".")) {
+      throw new Error("external_companion_runtime_import");
+    }
+    const target = posix.normalize(
+      posix.join(posix.dirname(name), specifier.text),
+    );
+    const relative = posix.relative(
+      posix.dirname(runtimeArchivePath(name)),
+      runtimeArchivePath(target),
+    );
+    changes.push({
+      start: specifier.getStart(module),
+      end: specifier.end,
+      value: JSON.stringify(
+        relative.startsWith(".") ? relative : `./${relative}`,
+      ),
+    });
+  }
+  function visit(node: ts.Node) {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteral(node.moduleSpecifier)
+    ) {
+      rewrite(node.moduleSpecifier);
+    } else if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      const argument = node.arguments[0];
+      if (!argument || !ts.isStringLiteral(argument)) {
+        throw new Error("dynamic_companion_runtime_import");
+      }
+      rewrite(argument);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(module);
+  for (const change of changes.sort((a, b) => b.start - a.start)) {
+    content =
+      content.slice(0, change.start) + change.value + content.slice(change.end);
+  }
+  return content;
+}
+
 /** Separate MV3 modules preserve the lexical scope of Chrome's injected functions. */
 async function runtimeFiles(): Promise<PackageFile[]> {
   const configuration = ts.readConfigFile(
@@ -335,7 +403,8 @@ async function runtimeFiles(): Promise<PackageFile[]> {
       .filter((file) => !file.isDeclarationFile)) {
       const file = module.fileName;
       if (
-        !file.startsWith(source) ||
+        (!file.startsWith(source) &&
+          file !== join(workspace, "packages/ewans/src/index.ts")) ||
         (await realpath(file)) !== file ||
         !(await lstat(file)).isFile()
       ) {
@@ -350,17 +419,20 @@ async function runtimeFiles(): Promise<PackageFile[]> {
     return await Promise.all(
       names
         .filter(
-          (name) => name.endsWith(".js") && name !== "shared/destinations.js",
+          (name) =>
+            name.endsWith(".js") &&
+            name !== "apps/chrome-companion/shared/destinations.js",
         )
         .map(async (name) => {
-          if (!/^(?:background|hh|shared|popup)\/[a-z0-9-]+\.js$/u.test(name)) {
-            throw new Error("unexpected_companion_runtime_file");
-          }
+          const target = runtimeArchivePath(name);
           const file = join(directory, name);
           if (!(await lstat(file)).isFile()) {
             throw new Error("invalid_companion_runtime_file");
           }
-          return [name, await readFile(file)] as const;
+          return [
+            target,
+            relocateRuntimeImports(await readFile(file, "utf8"), name),
+          ] as const;
         }),
     );
   } finally {

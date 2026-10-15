@@ -7,6 +7,7 @@ import ts from "typescript";
 
 const UI = "apps/ui-layer/src/";
 const COMPANION = "apps/chrome-companion/";
+const EWANS = "packages/ewans/src/index.ts";
 const LAYERS = ["app", "pages", "widgets", "features", "entities", "shared"];
 const RUNTIME = /^(?:background|hh|shared|popup)\//u;
 const SLICED = new Set(["pages", "widgets", "features", "entities"]);
@@ -42,6 +43,7 @@ export function validateImport(
   const file = path.posix.normalize(importer.replaceAll("\\", "/"));
   const runtime =
     file.startsWith(COMPANION) && RUNTIME.test(file.slice(COMPANION.length));
+  if (file === EWANS) return violation(file, "ewans-must-be-import-free");
   if (
     specifier.includes("\\") ||
     path.posix.isAbsolute(specifier) ||
@@ -67,6 +69,7 @@ export function validateImport(
     return [];
   }
   if (target.startsWith("../")) return violation(file, "escaping-import");
+  if (target === EWANS || `${target}.ts` === EWANS) return [];
   if (!target.startsWith(UI) && !target.startsWith(COMPANION)) {
     return violation(file, "private-source-import");
   }
@@ -375,6 +378,7 @@ export function checkBoundaries(root: string): BoundaryViolation[] {
   const files = [
     ...walk(path.join(root, COMPANION)),
     ...walk(path.join(root, UI)),
+    path.join(root, EWANS),
   ];
   for (const absolute of files) {
     const file = path.relative(root, absolute).replaceAll(path.sep, "/");

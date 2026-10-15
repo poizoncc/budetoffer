@@ -1,3 +1,5 @@
+import { readCompanionEwans, type EwansDescriptor } from "@/shared/api/ewans";
+
 export type CompanionLegalLinks = {
   termsUrl: string | null;
   privacyUrl: string | null;
@@ -20,6 +22,7 @@ export type CompanionStatus = {
   legalLinks?: CompanionLegalLinks;
   error?: string;
   backgroundError?: string;
+  ewans?: EwansDescriptor;
 };
 export type CompanionMessage =
   | { type: "chairs:device-status"; origin: string }
@@ -88,6 +91,11 @@ export function parseCompanionStatus(value: unknown): CompanionStatus {
     throw new Error("invalid_companion_status");
   }
   const status: CompanionStatus = { ok: value.ok };
+  if ("ewans" in value) {
+    const ewans = readCompanionEwans(value.ewans);
+    if (!ewans) throw new Error("invalid_companion_status");
+    status.ewans = ewans;
+  }
   for (const key of [
     "paired",
     "onboardingRequired",

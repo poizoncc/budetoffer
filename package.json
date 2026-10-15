@@ -1,6 +1,6 @@
 {
   "name": "budetoffer-chrome-companion",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,7 +9,7 @@
   "scripts": {
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "eslint --flag unstable_native_nodejs_ts_config --config eslint.companion.config.ts --max-warnings 0 apps scripts tests vitest.config.ts eslint.companion.config.ts",
+    "lint": "eslint --flag unstable_native_nodejs_ts_config --config eslint.companion.config.ts --max-warnings 0 apps packages scripts tests vitest.config.ts eslint.companion.config.ts",
     "check:runtime": "tsc -p apps/chrome-companion/tsconfig.runtime.json --noEmit",
     "check:popup": "tsc -p apps/chrome-companion/tsconfig.json --noEmit",
     "check:node": "tsc -p tsconfig.node.json --noEmit",

@@ -12,6 +12,28 @@ import {
 const page = "apps/ui-layer/src/pages/companion-popup/ui/CompanionPopup.tsx";
 const worker = "apps/chrome-companion/background/execution.ts";
 
+test("the shared EWANS contract is the only import-free package available to worker and popup", () => {
+  assert.deepEqual(
+    validateImport(worker, "../../../packages/ewans/src/index.ts"),
+    [],
+  );
+  assert.deepEqual(
+    validateImport(
+      "apps/ui-layer/src/shared/api/ewans.ts",
+      "../../../../../packages/ewans/src/index",
+    ),
+    [],
+  );
+  assert.equal(
+    validateImport(worker, "../../../packages/private/src/index.ts")[0]?.rule,
+    "private-source-import",
+  );
+  assert.equal(
+    validateImport("packages/ewans/src/index.ts", "node:fs")[0]?.rule,
+    "ewans-must-be-import-free",
+  );
+});
+
 test("FSD imports stay below their owner and use a slice public API", () => {
   assert.deepEqual(validateImport(page, "@/shared/ui/button"), []);
   assert.deepEqual(validateImport(page, "../model/companion-popup"), []);

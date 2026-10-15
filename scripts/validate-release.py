@@ -28,7 +28,7 @@ STATIC_FILES = {
     "hh/content.js", "hh/executor.js", "hh/outcomes.js", "hh/history-account.js",
     "hh/history-limits.js", "hh/response-form.js", "popup/controller.js", "popup/index.html",
     "shared/config.js", "shared/destinations.js", "shared/onboarding.js",
-    "shared/record.js", "shared/companion-protocol.js", "shared/chrome-api.js",
+    "shared/record.js", "shared/companion-protocol.js", "shared/chrome-api.js", "shared/ewans.js",
 }
 POPUP_ASSET = re.compile(r"popup/assets/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.(?:js|css|ttf|woff2?|svg|png)\Z")
 

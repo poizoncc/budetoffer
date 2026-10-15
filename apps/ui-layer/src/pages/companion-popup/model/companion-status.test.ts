@@ -1,7 +1,35 @@
 import { describe, expect, it } from "vitest";
+import { companionEwans } from "@/shared/api/ewans";
 import { parseCompanionStatus } from "./companion-popup";
 
 describe("Chrome message boundary", () => {
+  it("accepts a catalog descriptor without copying unrelated runtime properties", () => {
+    const ewans = companionEwans("connection_unavailable");
+    expect(
+      parseCompanionStatus({
+        ok: false,
+        ewans,
+        accessToken: "synthetic-runtime-only",
+      }),
+    ).toEqual({ ok: false, ewans });
+  });
+
+  it("rejects a declared invalid or forged descriptor instead of using its message", () => {
+    const ewans = companionEwans("connection_unavailable");
+    for (const descriptor of [
+      null,
+      [],
+      {},
+      { ...ewans, code: "BO-COMP-999" },
+      { ...ewans, group: "forged" },
+      { ...ewans, message: "synthetic-secret" },
+    ]) {
+      expect(() =>
+        parseCompanionStatus({ ok: false, ewans: descriptor }),
+      ).toThrow("invalid_companion_status");
+    }
+  });
+
   it("preserves the login state without carrying worker credentials into the UI", () => {
     expect(
       parseCompanionStatus({

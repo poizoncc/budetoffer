@@ -1,6 +1,7 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { StrictMode, useLayoutEffect, useRef } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { companionEwans, resolveCompanionEwans } from "@/shared/api/ewans";
 import { useCompanionConnection } from "./companion-connection";
 import type {
   CompanionMessage,
@@ -57,6 +58,62 @@ async function mount(client: CompanionPopupClient) {
   await act(async () => {});
   return hook;
 }
+
+it("shows the catalog explanation and support code without the server's raw error", async () => {
+  const ewans = companionEwans("connection_unavailable");
+  const fake = fakeClient({
+    ok: false,
+    ewans,
+    error: "synthetic-secret-do-not-display",
+  });
+  const hook = await mount(fake.client);
+  expect(hook.result.current.stage).toBe("unavailable");
+  expect(hook.result.current.error).toBe(resolveCompanionEwans(ewans));
+  expect(hook.result.current.error).toContain(ewans.code);
+  expect(hook.result.current.error).not.toContain("synthetic-secret");
+});
+
+it("shows a coded background error without revoking the confirmed connection", async () => {
+  const ewans = companionEwans("network_unavailable");
+  const fake = fakeClient({
+    ...ready,
+    ewans,
+    backgroundError: "synthetic-secret-do-not-display",
+  });
+  const hook = await mount(fake.client);
+  expect(hook.result.current.stage).toBe("ready");
+  expect(hook.result.current.status).toMatchObject({
+    ok: true,
+    paired: true,
+    onboardingRequired: false,
+    backgroundError: resolveCompanionEwans(ewans),
+  });
+  expect(hook.result.current.error).toBe("");
+});
+
+it("keeps old-worker local messages compatible while hiding arbitrary legacy failures", async () => {
+  const legacy = "Код входа истёк. Получите новый код в расширении.";
+  const fake = fakeClient({ ...login, backgroundError: legacy });
+  const hook = await mount(fake.client);
+  expect(hook.result.current.stage).toBe("login");
+  expect(hook.result.current.status?.backgroundError).toBe(legacy);
+  fake.send.mockResolvedValueOnce({
+    ...login,
+    backgroundError: "Ошибка: synthetic-secret-do-not-display",
+  });
+  await act(async () => hook.result.current.update());
+  expect(hook.result.current.stage).toBe("login");
+  expect(hook.result.current.status?.backgroundError).not.toContain(
+    "synthetic-secret",
+  );
+  fake.send.mockResolvedValueOnce({
+    ok: false,
+    error: "Ошибка: synthetic-secret-do-not-display",
+  });
+  await act(async () => hook.result.current.update());
+  expect(hook.result.current.stage).toBe("unavailable");
+  expect(hook.result.current.error).not.toContain("synthetic-secret");
+});
 
 it("retains the last confirmed connection on a check failure and blocks actions until a successful retry", async () => {
   const fake = fakeClient(ready);

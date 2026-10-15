@@ -1,4 +1,5 @@
 import { isRecord } from "../shared/record.ts";
+import { createCompanionRequestError } from "../../../packages/ewans/src/index.ts";
 export interface Device {
   origin: string;
   accessToken: string;
@@ -118,11 +119,16 @@ export async function publicLoginRequest(
     signal: AbortSignal.timeout(15000),
   });
   if (!response.ok) {
-    throw new Error(
+    const problem: unknown = await response.json().catch(() => null);
+    throw createCompanionRequestError(
+      problem,
+      response.status,
       response.status === 410 ? "login_expired" : "device_login_unavailable",
     );
   }
-  const value: unknown = await response.json();
+  const value: unknown = await response.json().catch(() => {
+    throw createCompanionRequestError(null, 502, "invalid_login_response");
+  });
   if (!isRecord(value)) throw new Error("invalid_login_response");
   if (
     path === "device-login/start" &&

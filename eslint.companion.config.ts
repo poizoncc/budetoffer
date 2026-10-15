@@ -17,7 +17,12 @@ const testFiles = [
   "**/*.test.{ts,tsx}",
   "apps/ui-layer/src/shared/ui/test-setup.ts",
 ];
-const sourceFiles = [...browserFiles, ...nodeFiles, ...testFiles];
+const sourceFiles = [
+  ...browserFiles,
+  ...nodeFiles,
+  ...testFiles,
+  "packages/ewans/**/*.ts",
+];
 
 // QRKO uses Prettier for layout. Keep one formatter and enforce it separately;
 // neostandard, the TS compiler and React Hooks checks own code correctness.

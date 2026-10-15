@@ -41,7 +41,7 @@ npm run build
 
 Готовая папка для загрузки через `chrome://extensions` — `build/budetoffer-chrome`, архив — `build/budetoffer-chrome.zip`. Для сборки не нужны аккаунт, токен, закрытые npm-пакеты или исходники сервера BudetOffer. Prettier проверяет формат; ESLint с neostandard и React Hooks — корректность, зависимости effects и запрет `any` и подавлений. `npm run check` проверяет строгие типы runtime, интерфейса, сборочных скриптов, **Node- и UI-тестов**, затем границы импортов и происхождение vendored-файлов.
 
-[Состав исходников и границы доступа](docs/source.md) · [Стандарты и проверки](docs/standards.md) · [Результаты проверки перед публикацией](docs/security-audit.md)
+[Состав исходников и границы доступа](docs/source.md) · [Стандарты и проверки](docs/standards.md) · [Сообщения EWANS](docs/ewans.md) · [Результаты проверки перед публикацией](docs/security-audit.md)
 
 ## Обновление
 

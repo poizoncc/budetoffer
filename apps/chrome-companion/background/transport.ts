@@ -2,6 +2,7 @@ import { COMPANION_ORIGINS } from "../shared/destinations.ts";
 import { parseCompanionJob } from "../shared/companion-protocol.ts";
 import { isRecord } from "../shared/record.ts";
 import type { CompanionTransport } from "../shared/companion-protocol.ts";
+import { createCompanionRequestError } from "../../../packages/ewans/src/index.ts";
 interface TransportOptions {
   origin: string;
   token(): Promise<string | null>;
@@ -52,8 +53,17 @@ export function createCompanionTransport({
           redirect: "error",
         },
       );
-      if (!response.ok) throw new Error(`companion_http_${response.status}`);
-      const value: unknown = await response.json();
+      if (!response.ok) {
+        const problem: unknown = await response.json().catch(() => null);
+        throw createCompanionRequestError(
+          problem,
+          response.status,
+          `companion_http_${response.status}`,
+        );
+      }
+      const value: unknown = await response.json().catch(() => {
+        throw createCompanionRequestError(null, 502, "invalid_response");
+      });
       return value;
     } finally {
       clearTimeout(timer);

@@ -28,11 +28,17 @@ import type {
   CompanionTransport,
 } from "../shared/companion-protocol.ts";
 import type { PairedChromeApi } from "../shared/chrome-api.ts";
+import {
+  companionEwans,
+  createCompanionRequestError,
+  readCompanionEwans,
+} from "../../../packages/ewans/src/index.ts";
 
 const KEY = "chairs-companion-device-v1";
 const ORIGINS = new Set<string>(COMPANION_ORIGINS);
 const ALARM = "chairs-companion-poll";
 const ERROR_KEY = "chairs-companion-background-error-v1";
+const EWANS_KEY = "chairs-companion-background-ewans-v1";
 const UNAVAILABLE =
   "Сервер недоступен. Проверьте подключение и включённый компьютер. Фоновая проверка повторится автоматически.";
 
@@ -81,6 +87,7 @@ export function installPairedCompanion(
     const checkpoint = await checkpoints.load();
     const pending = await readPending();
     const backgroundError = (await storage.get(ERROR_KEY))[ERROR_KEY];
+    const ewans = readCompanionEwans((await storage.get(EWANS_KEY))[EWANS_KEY]);
     return {
       paired: !!valid(device),
       origin: valid(device) ? device.origin : null,
@@ -97,6 +104,7 @@ export function installPairedCompanion(
         ? { pendingLogin: publicPendingLogin(pending) }
         : {}),
       ...(typeof backgroundError === "string" ? { backgroundError } : {}),
+      ...(typeof backgroundError === "string" && ewans ? { ewans } : {}),
     };
   };
   async function saveDevice(origin: string, response: unknown) {
@@ -115,6 +123,7 @@ export function installPairedCompanion(
       [ONBOARDING_KEY]: null,
       [LOGIN_KEY]: null,
       [ERROR_KEY]: null,
+      [EWANS_KEY]: null,
     });
     await chromeApi.alarms.clear?.(LOGIN_ALARM);
   }
@@ -156,7 +165,14 @@ export function installPairedCompanion(
           signal: AbortSignal.timeout(15000),
         },
       );
-      if (!response.ok) throw new Error("pairing_rejected");
+      if (!response.ok) {
+        const problem: unknown = await response.json().catch(() => null);
+        throw createCompanionRequestError(
+          problem,
+          response.status,
+          "pairing_rejected",
+        );
+      }
       const device: unknown = await response.json();
       await saveDevice(origin, device);
       return status();
@@ -209,7 +225,11 @@ export function installPairedCompanion(
       if (!validPendingLogin(pending, ORIGINS, now())) {
         throw new Error("invalid_login_response");
       }
-      await storage.set({ [LOGIN_KEY]: pending, [ERROR_KEY]: null });
+      await storage.set({
+        [LOGIN_KEY]: pending,
+        [ERROR_KEY]: null,
+        [EWANS_KEY]: null,
+      });
       await ensureAlarm(LOGIN_ALARM, 0.5);
       return status();
     } finally {
@@ -227,6 +247,7 @@ export function installPairedCompanion(
           await storage.set({
             [LOGIN_KEY]: null,
             [ERROR_KEY]: "Код входа истёк. Получите новый код в расширении.",
+            [EWANS_KEY]: companionEwans("login_expired"),
           });
           await chromeApi.alarms.clear?.(LOGIN_ALARM);
         }
@@ -252,19 +273,28 @@ export function installPairedCompanion(
         await storage.set({
           [LOGIN_KEY]: null,
           [ERROR_KEY]: "Код входа истёк. Получите новый код в расширении.",
+          [EWANS_KEY]: companionEwans("login_expired"),
         });
         await chromeApi.alarms.clear?.(LOGIN_ALARM);
       } else if (result.state === "pending") {
-        await storage.set({ [ERROR_KEY]: null });
+        await storage.set({ [ERROR_KEY]: null, [EWANS_KEY]: null });
       } else throw new Error("invalid_login_response");
     } catch (error) {
       if (errorMessage(error) === "login_expired") {
         await storage.set({
           [LOGIN_KEY]: null,
           [ERROR_KEY]: "Код входа истёк. Получите новый код в расширении.",
+          [EWANS_KEY]: companionEwans("login_expired"),
         });
         await chromeApi.alarms.clear?.(LOGIN_ALARM);
-      } else await storage.set({ [ERROR_KEY]: UNAVAILABLE });
+      } else {
+        await storage.set({
+          [ERROR_KEY]: UNAVAILABLE,
+          [EWANS_KEY]:
+            readCompanionEwans(error) ??
+            companionEwans("connection_unavailable"),
+        });
+      }
     } finally {
       pairing = false;
     }
@@ -284,6 +314,7 @@ export function installPairedCompanion(
           now(),
         ),
         [ERROR_KEY]: null,
+        [EWANS_KEY]: null,
       });
       await ensureAlarms();
       return status();
@@ -384,7 +415,7 @@ export function installPairedCompanion(
         checkpoints,
         execute: executor.execute,
       }).tick(reconcileOriginalJobId);
-      await storage.set({ [ERROR_KEY]: null });
+      await storage.set({ [ERROR_KEY]: null, [EWANS_KEY]: null });
     } catch (error) {
       if (errorMessage(error) !== "companion_http_401") throw error;
       // Only authentication failure revokes local credentials. A missing
@@ -395,6 +426,8 @@ export function installPairedCompanion(
       await storage.set({
         [ERROR_KEY]:
           "Подключение расширения отозвано или срок входа истёк. Войдите снова; незавершённые задания сохраняются для сверки.",
+        [EWANS_KEY]:
+          readCompanionEwans(error) ?? companionEwans("device_unauthorized"),
       });
     } finally {
       running = false;
@@ -402,7 +435,14 @@ export function installPairedCompanion(
   };
   const boundedTick = () => {
     void tick()
-      .catch(() => storage.set({ [ERROR_KEY]: UNAVAILABLE }))
+      .catch((error: unknown) =>
+        storage.set({
+          [ERROR_KEY]: UNAVAILABLE,
+          [EWANS_KEY]:
+            readCompanionEwans(error) ??
+            companionEwans("connection_unavailable"),
+        }),
+      )
       .catch(() => {});
   };
   const resume = () => {
@@ -412,7 +452,14 @@ export function installPairedCompanion(
       await pollLogin();
       boundedTick();
     })()
-      .catch(() => storage.set({ [ERROR_KEY]: UNAVAILABLE }))
+      .catch((error: unknown) =>
+        storage.set({
+          [ERROR_KEY]: UNAVAILABLE,
+          [EWANS_KEY]:
+            readCompanionEwans(error) ??
+            companionEwans("connection_unavailable"),
+        }),
+      )
       .catch(() => {});
   };
   chromeApi.alarms.onAlarm.addListener((alarm) => {
@@ -461,7 +508,13 @@ export function installPairedCompanion(
           if (running || pairing) throw new Error("companion_busy");
           pairing = true;
           try {
-            await storage.remove([KEY, ONBOARDING_KEY, LOGIN_KEY, ERROR_KEY]); // Retain uncertain job checkpoints for reconciliation.
+            await storage.remove([
+              KEY,
+              ONBOARDING_KEY,
+              LOGIN_KEY,
+              ERROR_KEY,
+              EWANS_KEY,
+            ]); // Retain uncertain job checkpoints for reconciliation.
             await chromeApi.alarms.clear?.(LOGIN_ALARM);
           } finally {
             pairing = false;
@@ -472,9 +525,11 @@ export function installPairedCompanion(
       };
       void action().then(
         (value) => respond({ ok: true, ...value }),
-        () =>
+        (error: unknown) =>
           respond({
             ok: false,
+            ewans:
+              readCompanionEwans(error) ?? companionEwans(errorMessage(error)),
             error:
               "Не удалось изменить подключение. Проверьте код и состояние заданий в приложении.",
           }),
