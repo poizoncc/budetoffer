@@ -1,45 +1,198 @@
-import assert from 'node:assert/strict';
-import {test} from 'node:test';
-import {JSDOM} from 'jsdom';
-import {responseFormOperation, readResponseResumeEvidence, openResponseUi} from '../apps/chrome-companion/hh/response-form.ts';
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { JSDOM } from "jsdom";
+import {
+  responseFormOperation,
+  readResponseResumeEvidence,
+  openResponseUi,
+} from "../apps/chrome-companion/hh/response-form.ts";
+import { serializedRecord } from "./helpers/dom.ts";
 
-test('packaged synthetic form never writes before permit and cannot click twice', () => {
-  const state = { userType: 'applicant', account: {}, hhidAccount: {}, session: { isFallback: false, securityCheckFailed: false, isMultiAccount: false, hasExtraAccounts: false }, vacancyResponsePopup: { vacancy: { shortVacancy: { vacancyId: 123, closedForApplicants: false, userTestPresent: false }, letterMaxLength: 10000, responseImpossible: false, alreadyApplied: false, hasQuickResponse: false, test: { hasTests: false }, resumes: { '42': { forbidden: null, _attributes: { id: '42', hash: 'resume-one', user: '101', permission: 'edit' } } } } } };
-  const dom = new JSDOM(`<template id="HH-Lux-InitialState">${JSON.stringify(state)}</template><form action="/applicant/vacancy_response" method="post"><textarea data-qa="vacancy-response-popup-form-letter-input"></textarea><button data-qa="vacancy-response-submit-popup">Send</button></form><div role="dialog" data-qa="drop-base"><input type="radio" value="resume-one" checked></div>`, { url: 'https://hh.ru/applicant/vacancy_response?vacancyId=123', runScripts: 'outside-only' });
-  const run = dom.window.eval('(' + responseFormOperation.toString() + ')');
-  const input = { operation: 'inspect', jobId: 'job-one', payloadHash: 'a'.repeat(64), hhAccountKey: 'hh-applicant-101', vacancyId: '123', resumeId: 'resume-one', coverLetter: 'Synthetic evidence-backed cover letter for testing.' };
+test("packaged synthetic form never writes before permit and cannot click twice", () => {
+  const state = {
+    userType: "applicant",
+    account: {},
+    hhidAccount: {},
+    session: {
+      isFallback: false,
+      securityCheckFailed: false,
+      isMultiAccount: false,
+      hasExtraAccounts: false,
+    },
+    vacancyResponsePopup: {
+      vacancy: {
+        shortVacancy: {
+          vacancyId: 123,
+          closedForApplicants: false,
+          userTestPresent: false,
+        },
+        letterMaxLength: 10000,
+        responseImpossible: false,
+        alreadyApplied: false,
+        hasQuickResponse: false,
+        test: { hasTests: false },
+        resumes: {
+          "42": {
+            forbidden: null,
+            _attributes: {
+              id: "42",
+              hash: "resume-one",
+              user: "101",
+              permission: "edit",
+            },
+          },
+        },
+      },
+    },
+  };
+  const dom = new JSDOM(
+    `<template id="HH-Lux-InitialState">${JSON.stringify(state)}</template><form action="/applicant/vacancy_response" method="post"><textarea data-qa="vacancy-response-popup-form-letter-input"></textarea><button data-qa="vacancy-response-submit-popup">Send</button></form><div role="dialog" data-qa="drop-base"><input type="radio" value="resume-one" checked></div>`,
+    {
+      url: "https://hh.ru/applicant/vacancy_response?vacancyId=123",
+      runScripts: "outside-only",
+    },
+  );
+  const run = (input: unknown) =>
+    serializedRecord(dom, responseFormOperation, input);
+  const input = {
+    operation: "inspect",
+    jobId: "job-one",
+    payloadHash: "a".repeat(64),
+    hhAccountKey: "hh-applicant-101",
+    vacancyId: "123",
+    resumeId: "resume-one",
+    coverLetter: "Synthetic evidence-backed cover letter for testing.",
+  };
   let clicks = 0;
-  dom.window.document.querySelector('button')!.addEventListener('click', event => { clicks++; event.preventDefault(); });
-  assert.equal(run(input).formVersion, 'hh-popup-portal-radio-v1');
-  assert.equal(dom.window.document.querySelector('textarea')!.value, '');
-  assert.throws(() => run({ ...input, operation: 'submit' }), /invalid_mutation_permit/);
-  assert.equal(clicks, 0); assert.equal(dom.window.document.querySelector('textarea')!.value, '');
-  const permitted = { ...input, operation: 'submit', permit: { jobId: input.jobId, payloadHash: input.payloadHash, permitId: 'p'.repeat(43), expiresAt: new Date(Date.now() + 30000).toISOString() } };
-  assert.equal(run(permitted).confirmationRequired, true); assert.equal(clicks, 1);
-  assert.throws(() => run(permitted), /reconciliation_required/); assert.equal(clicks, 1);
+  dom.window.document
+    .querySelector("button")!
+    .addEventListener("click", (event) => {
+      clicks++;
+      event.preventDefault();
+    });
+  assert.equal(run(input).formVersion, "hh-popup-portal-radio-v1");
+  assert.equal(dom.window.document.querySelector("textarea")!.value, "");
+  assert.throws(
+    () => run({ ...input, operation: "submit" }),
+    /invalid_mutation_permit/,
+  );
+  assert.equal(clicks, 0);
+  assert.equal(dom.window.document.querySelector("textarea")!.value, "");
+  const permitted = {
+    ...input,
+    operation: "submit",
+    permit: {
+      jobId: input.jobId,
+      payloadHash: input.payloadHash,
+      permitId: "p".repeat(43),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+    },
+  };
+  assert.equal(run(permitted).confirmationRequired, true);
+  assert.equal(clicks, 1);
+  assert.throws(() => run(permitted), /reconciliation_required/);
+  assert.equal(clicks, 1);
   dom.window.close();
 });
-test('response owned map proves target ownership but never infers selected resume from titles or map order', () => {
-  const owner = (id: string, hash: string, user = '101') => ({ forbidden: null, _attributes: { id, hash, user, permission: 'edit', title: { string: 'Identical synthetic title' } } });
-  const state = { userType: 'applicant', account: {}, hhidAccount: {}, session: { isFallback: false, securityCheckFailed: false, isMultiAccount: false, hasExtraAccounts: false }, vacancyResponsePopup: { vacancy: { shortVacancy: { vacancyId: 123, closedForApplicants: false, userTestPresent: false }, letterMaxLength: 10000, resumes: { '42': owner('42', 'resume-one'), '43': owner('43', 'resume-two') }, usedResumeIds: [], unusedResumeIds: ['42', '43'], responseImpossible: false, alreadyApplied: false, hasQuickResponse: false, test: { hasTests: false } } } };
-  const dom = new JSDOM(`<template id="HH-Lux-InitialState">${JSON.stringify(state)}</template><div data-qa="resume-title">Identical synthetic title</div>`, { url: 'https://hh.ru/applicant/vacancy_response?vacancyId=123', runScripts: 'outside-only' });
-  const run = dom.window.eval('(' + readResponseResumeEvidence.toString() + ')');
-  const input = { hhAccountKey: 'hh-applicant-101', vacancyId: '123', resumeId: 'resume-two' };
+test("response owned map proves target ownership but never infers selected resume from titles or map order", () => {
+  const owner = (id: string, hash: string, user = "101") => ({
+    forbidden: null,
+    _attributes: {
+      id,
+      hash,
+      user,
+      permission: "edit",
+      title: { string: "Identical synthetic title" },
+    },
+  });
+  const state = {
+    userType: "applicant",
+    account: {},
+    hhidAccount: {},
+    session: {
+      isFallback: false,
+      securityCheckFailed: false,
+      isMultiAccount: false,
+      hasExtraAccounts: false,
+    },
+    vacancyResponsePopup: {
+      vacancy: {
+        shortVacancy: {
+          vacancyId: 123,
+          closedForApplicants: false,
+          userTestPresent: false,
+        },
+        letterMaxLength: 10000,
+        resumes: {
+          "42": owner("42", "resume-one"),
+          "43": owner("43", "resume-two"),
+        },
+        usedResumeIds: [],
+        unusedResumeIds: ["42", "43"],
+        responseImpossible: false,
+        alreadyApplied: false,
+        hasQuickResponse: false,
+        test: { hasTests: false },
+      },
+    },
+  };
+  const dom = new JSDOM(
+    `<template id="HH-Lux-InitialState">${JSON.stringify(state)}</template><div data-qa="resume-title">Identical synthetic title</div>`,
+    {
+      url: "https://hh.ru/applicant/vacancy_response?vacancyId=123",
+      runScripts: "outside-only",
+    },
+  );
+  const run = (input: unknown) =>
+    serializedRecord(dom, readResponseResumeEvidence, input);
+  const input = {
+    hhAccountKey: "hh-applicant-101",
+    vacancyId: "123",
+    resumeId: "resume-two",
+  };
   const result = run(input);
-  assert.equal(result.ownershipVerified, true); assert.equal(result.resumeInternalId, '43'); assert.equal(result.selectionVerified, false);
-  assert.ok(!JSON.stringify(result).includes('Identical')); assert.equal(result.responseAllowed, true);
+  assert.equal(result.ownershipVerified, true);
+  assert.equal(result.resumeInternalId, "43");
+  assert.equal(result.selectionVerified, false);
+  assert.ok(!JSON.stringify(result).includes("Identical"));
+  assert.equal(result.responseAllowed, true);
   let pickerClicks = 0;
-  dom.window.document.querySelector('[data-qa="resume-title"]')!.addEventListener('click', () => { pickerClicks++; });
-  const open = dom.window.eval('(' + openResponseUi.toString() + ')');
-  open({ ...input, operation: 'open-picker' }); assert.equal(pickerClicks, 1);
-  assert.throws(() => open({ ...input, operation: 'submit' }), /unsupported_response_form/);
-  dom.window.document.body.insertAdjacentHTML('beforeend', '<form method="post"><button data-qa="vacancy-response-submit-popup">Send</button></form><div role="dialog" data-qa="drop-base"><input type="radio" value="resume-one"><input type="radio" value="resume-two" checked></div>');
+  dom.window.document
+    .querySelector('[data-qa="resume-title"]')!
+    .addEventListener("click", () => {
+      pickerClicks++;
+    });
+  const open = (input: unknown) => serializedRecord(dom, openResponseUi, input);
+  open({ ...input, operation: "open-picker" });
+  assert.equal(pickerClicks, 1);
+  assert.throws(
+    () => open({ ...input, operation: "submit" }),
+    /unsupported_response_form/,
+  );
+  dom.window.document.body.insertAdjacentHTML(
+    "beforeend",
+    '<form method="post"><button data-qa="vacancy-response-submit-popup">Send</button></form><div role="dialog" data-qa="drop-base"><input type="radio" value="resume-one"><input type="radio" value="resume-two" checked></div>',
+  );
   assert.equal(run(input).selectionVerified, true);
-  assert.equal(run({ ...input, resumeId: 'resume-one' }).selectionVerified, false);
-  dom.window.document.querySelector('input:checked')!.setAttribute('value', 'not-owned');
+  assert.equal(
+    run({ ...input, resumeId: "resume-one" }).selectionVerified,
+    false,
+  );
+  dom.window.document
+    .querySelector("input:checked")!
+    .setAttribute("value", "not-owned");
   assert.equal(run(input).selectionVerified, false);
-  assert.throws(() => run({ ...input, hhAccountKey: 'hh-applicant-202' }), /response_identity_unverified/);
-  state.vacancyResponsePopup.vacancy.resumes['43'] = owner('43', 'resume-two', '202');
-  dom.window.document.querySelector('template')!.innerHTML = JSON.stringify(state);
-  assert.throws(() => run(input), /response_identity_unverified/); dom.window.close();
+  assert.throws(
+    () => run({ ...input, hhAccountKey: "hh-applicant-202" }),
+    /response_identity_unverified/,
+  );
+  state.vacancyResponsePopup.vacancy.resumes["43"] = owner(
+    "43",
+    "resume-two",
+    "202",
+  );
+  dom.window.document.querySelector("template")!.innerHTML =
+    JSON.stringify(state);
+  assert.throws(() => run(input), /response_identity_unverified/);
+  dom.window.close();
 });

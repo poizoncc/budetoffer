@@ -1,0 +1,9 @@
+node_modules/
+build/
+distribution/
+apps/chrome-companion/dist/
+coverage/
+vendor/
+assets/
+apps/chrome-companion/assets/
+apps/ui-layer/src/shared/assets/

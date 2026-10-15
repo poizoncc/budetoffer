@@ -1,9 +1,9 @@
 {
   "formatVersion": 1,
-  "version": "0.2.6",
+  "version": "0.2.7",
   "origin": "https://my.budetoffer.ru",
   "fileName": "budetoffer-chrome.zip",
-  "sha256": "de513efb329cbaf2a6231321482a1ef7b62345ecd6e98d44582faff790b25d65",
-  "size": 675870,
+  "sha256": "71ae5e2ea5d29bbf939551f23bad99a157b8b5827857ea4578d637b204cc0215",
+  "size": 678426,
   "chromeMinimumVersion": "120"
 }

@@ -1,0 +1,15 @@
+{
+  "extends": "./apps/chrome-companion/tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext"
+  },
+  "include": [
+    "scripts/**/*.ts",
+    "eslint.companion.config.ts",
+    "vitest.config.ts",
+    "apps/chrome-companion/vite.config.ts"
+  ]
+}

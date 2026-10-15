@@ -1,0 +1,17 @@
+{
+  "extends": "./apps/chrome-companion/tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node", "chrome", "vitest/globals"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "paths": { "@/*": ["./apps/ui-layer/src/*"] }
+  },
+  "include": [
+    "tests/**/*.ts",
+    "apps/ui-layer/src/pages/companion-popup/**/*.test.ts",
+    "apps/ui-layer/src/pages/companion-popup/**/*.test.tsx",
+    "apps/ui-layer/src/shared/ui/test-setup.ts"
+  ]
+}

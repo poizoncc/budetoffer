@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["chrome", "vite/client"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "paths": { "@/*": ["../ui-layer/src/*"] }
+  },
+  "include": ["src", "../ui-layer/src/pages/companion-popup"],
+  "exclude": [
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "../ui-layer/src/**/*.test.ts",
+    "../ui-layer/src/**/*.test.tsx"
+  ]
+}

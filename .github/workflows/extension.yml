@@ -3,7 +3,7 @@ name: Extension
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    tags: ["v*"]
   pull_request:
     branches: [main]
 
@@ -26,7 +26,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
       - name: Install pinned secret scanner
         shell: bash
@@ -47,6 +47,7 @@ jobs:
         run: npm ci --registry=https://registry.npmjs.org --ignore-scripts
       - name: Check strict TypeScript and test extension source
         run: |
+          npm run format:check
           npm run lint
           npm run check
           npm test
