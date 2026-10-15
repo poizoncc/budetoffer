@@ -1,3 +1,13 @@
+node_modules/
+build/
+apps/chrome-companion/dist/
+coverage/
+.DS_Store
+*.log
+.env
+.env.*
+*.pem
+*.key
+*.p12
 __pycache__/
 *.pyc
-.DS_Store

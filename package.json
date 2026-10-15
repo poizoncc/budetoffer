@@ -1,0 +1,41 @@
+{
+  "name": "budetoffer-chrome-companion",
+  "version": "0.2.5",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22.12.0"},
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test:node": "node --experimental-strip-types --test tests/chairs-companion-*.test.ts",
+    "test:ui": "vitest run --config vitest.config.ts",
+    "test": "npm run test:node && npm run test:ui",
+    "build": "node scripts/build.mjs"
+  },
+  "dependencies": {
+    "@qrko/shared": "file:vendor/qrko-shared",
+    "@qrko/uikit": "file:vendor/qrko-uikit",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "fflate": "0.8.3",
+    "lucide-react": "1.23.0",
+    "qrcode": "1.5.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tailwind-merge": "3.6.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.2",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
+    "@types/node": "25.9.5",
+    "@types/qrcode": "1.5.6",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "@vitejs/plugin-react": "6.0.3",
+    "jsdom": "29.1.1",
+    "tailwindcss": "4.3.2",
+    "typescript": "6.0.3",
+    "vite": "8.3.3",
+    "vitest": "4.1.11"
+  }
+}

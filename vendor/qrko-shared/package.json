@@ -1,0 +1,8 @@
+{
+  "name": "@qrko/shared",
+  "version": "0.0.1-main.467327a",
+  "private": true,
+  "type": "module",
+  "exports": {"./lib/utils": "./src/lib/utils.ts"},
+  "dependencies": {"clsx": "2.1.1", "tailwind-merge": "3.6.0"}
+}

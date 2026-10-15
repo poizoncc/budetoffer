@@ -1,0 +1,69 @@
+{
+  "format": 1,
+  "packages": [
+    {
+      "name": "@qrko/shared",
+      "version": "0.0.1-main.467327a",
+      "origin": "First-party QRKO package used by BudetOffer Chrome companion 0.2.4",
+      "scope": "Only the imported source modules and theme; package.json is a reduced public-build adapter, not the original package metadata.",
+      "files": [
+        {
+          "path": "qrko-shared/src/lib/utils.ts",
+          "sha256": "b2179073a79ec11767b731747e283e3e92cb6f409fe9968a224f6949d1331517"
+        }
+      ]
+    },
+    {
+      "name": "@qrko/uikit",
+      "version": "0.0.1-main.467327a",
+      "origin": "First-party QRKO package used by BudetOffer Chrome companion 0.2.4",
+      "scope": "Only the imported source modules and theme; package.json is a reduced public-build adapter, not the original package metadata.",
+      "files": [
+        {
+          "path": "qrko-uikit/src/form/fieldSurface.ts",
+          "sha256": "cb811f5505eb5a442a987501006337f882ad5d73b337ff983c7ae3b7a22296ea"
+        },
+        {
+          "path": "qrko-uikit/src/layout/Surface.tsx",
+          "sha256": "603fe4398367424dde638ef828d24f86fb6a4fa3da3538231c5733d83ef1cc39"
+        },
+        {
+          "path": "qrko-uikit/src/layout/UiPresentation.tsx",
+          "sha256": "c37c80a888bc9c65b566d70cab35006af5419e5b3eb798ea12552d598712a0b8"
+        },
+        {
+          "path": "qrko-uikit/src/shadcn/alert-dialog.tsx",
+          "sha256": "cf3cd7a475e26524e721e623db082f113e14bc17d3b73d99debc71d9b502863d"
+        },
+        {
+          "path": "qrko-uikit/src/shadcn/button.tsx",
+          "sha256": "ca9833102a1d9ccbc01fe3ee26f71f01225e9f9aa9fc65924c8cd0c5a19103df"
+        },
+        {
+          "path": "qrko-uikit/src/shadcn/checkbox.tsx",
+          "sha256": "3a28d1309a1a5b7a4f2296247998a85e6779e8f644d2063802ad7f0b7831fe2e"
+        },
+        {
+          "path": "qrko-uikit/src/shadcn/input.tsx",
+          "sha256": "e8ded1d5e9b6d2c6cad0ef1f1ec23d4a65c76fe3e1b724513b27f43eaac992e2"
+        },
+        {
+          "path": "qrko-uikit/src/shadcn/switch.tsx",
+          "sha256": "e2b956a40a4804d3bc2ba26d3d994e9742e0434e885cdb1bc4e5ef52bdcfb77d"
+        },
+        {
+          "path": "qrko-uikit/src/shadcn/tabs.tsx",
+          "sha256": "39430d948b2c31978f2ac87f3e9aaa185fa7a722f1b0a980731b45c07612cd1b"
+        },
+        {
+          "path": "qrko-uikit/src/shadcn/textarea.tsx",
+          "sha256": "eef58619966959c6f81e330ccbd0959d314ac04a5995ad6e4403eed200cd58dd"
+        },
+        {
+          "path": "qrko-uikit/src/theme.css",
+          "sha256": "82ae47ec40f544a76fe9a4d4883c99d4d9a196307ddbfa5d1f3d9b11819ec19b"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "BudetOffer Local Companion",
+  "version": "0.2.5",
+  "minimum_chrome_version": "120",
+  "description": "Local-only companion for BudetOffer BFF.",
+  "icons": {
+    "16": "assets/budetoffer-icon-16.png",
+    "32": "assets/budetoffer-icon-32.png",
+    "48": "assets/budetoffer-icon-48.png",
+    "128": "assets/budetoffer-icon-128.png"
+  },
+  "permissions": ["activeTab", "storage", "scripting", "alarms"],
+  "host_permissions": ["http://127.0.0.1:6970/*", "http://127.0.0.1:6971/*", "https://hh.ru/*", "https://*.hh.ru/*"],
+  "background": {"service_worker": "background/bootstrap.js", "type": "module"},
+  "action": {
+    "default_icon": {
+      "16": "assets/budetoffer-icon-16.png",
+      "32": "assets/budetoffer-icon-32.png",
+      "48": "assets/budetoffer-icon-48.png",
+      "128": "assets/budetoffer-icon-128.png"
+    },
+    "default_title": "BudetOffer",
+    "default_popup": "popup/index.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://hh.ru/*", "https://*.hh.ru/*"],
+      "js": ["hh/content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

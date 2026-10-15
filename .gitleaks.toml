@@ -1,0 +1,4 @@
+title = "BudetOffer extension source and release scanning"
+
+[extend]
+useDefault = true
