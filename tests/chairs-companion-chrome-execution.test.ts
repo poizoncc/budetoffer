@@ -876,6 +876,384 @@ test("verified homepage and owned resume do not turn ownerless empty history int
     chrome.close();
   }
 });
+test("new owned tabs wait for their exact HH resource to commit before reading", async () => {
+  const pendingUrl = "https://kaliningrad.hh.ru/resume/resume-one";
+  for (const observation of [
+    { url: undefined, status: "complete", pendingUrl },
+    { url: "", status: "complete", pendingUrl },
+    { url: "about:blank", status: "complete", pendingUrl },
+    { url: "https://hh.ru/resume/resume-one", status: "complete", pendingUrl },
+    { url: "https://hh.ru/resume/resume-one", status: "loading" },
+  ]) {
+    const chrome = browser(pages, (target) =>
+      target.replace("https://hh.ru", "https://kaliningrad.hh.ru"),
+    );
+    const get = chrome.api.tabs.get;
+    const inject = chrome.api.scripting.executeScript;
+    let pending = true;
+    let ownedReads = 0;
+    chrome.api.tabs.get = async (id) => {
+      const tab = await get(id);
+      if (id === 101 && ++ownedReads === 1) {
+        return {
+          ...tab,
+          ...observation,
+        };
+      }
+      if (id === 101) pending = false;
+      return tab;
+    };
+    chrome.api.scripting.executeScript = async (script) => {
+      if (script.target.tabId === 101) assert.equal(pending, false);
+      return inject(script);
+    };
+    try {
+      const result = await createChromeExecution(
+        chrome.api,
+        {},
+        {
+          load: async () => null,
+        },
+      ).execute(
+        job({
+          kind: "read_profile",
+          includeResumeIds: ["resume-one"],
+          includeProfileText: false,
+        }),
+      );
+      assert.equal(result.outcome, "confirmed");
+      assert.ok(result.result?.kind === "read_profile");
+      assert.equal(result.result.resumes[0]?.resumeId, "resume-one");
+      assert.deepEqual(chrome.removed, [101]);
+      assert.equal(chrome.tabs.size, 1);
+    } finally {
+      chrome.close();
+    }
+  }
+});
+test("owned navigation waits through the previous completed HH document", async () => {
+  const chrome = browser((url) => {
+    const id = new URL(url).pathname.slice("/resume/".length);
+    return pages(url).replaceAll("resume-one", id);
+  });
+  const update = chrome.api.tabs.update;
+  const get = chrome.api.tabs.get;
+  const inject = chrome.api.scripting.executeScript;
+  let pending: { previous: string; destination: string } | undefined;
+  let pendingObserved = false;
+  chrome.api.tabs.update = async (id, options) => {
+    const previous = (await get(id)).url!;
+    const result = await update(id, options);
+    if (options.url) pending = { previous, destination: options.url };
+    return result;
+  };
+  chrome.api.tabs.get = async (id) => {
+    const tab = await get(id);
+    if (pending && !pendingObserved) {
+      pendingObserved = true;
+      return {
+        ...tab,
+        url: pending.previous,
+        status: "complete",
+        pendingUrl: pending.destination,
+      };
+    }
+    if (pendingObserved) pending = undefined;
+    return tab;
+  };
+  chrome.api.scripting.executeScript = async (script) => {
+    assert.equal(pending, undefined);
+    return inject(script);
+  };
+  try {
+    const result = await createChromeExecution(
+      chrome.api,
+      {},
+      { load: async () => null },
+    ).execute(
+      job({
+        kind: "read_profile",
+        includeResumeIds: ["resume-one", "resume-two"],
+        includeProfileText: false,
+      }),
+    );
+    assert.equal(pendingObserved, true);
+    assert.equal(result.outcome, "confirmed");
+    assert.ok(result.result?.kind === "read_profile");
+    assert.deepEqual(
+      result.result.resumes.map((resume) => resume.resumeId),
+      ["resume-one", "resume-two"],
+    );
+    assert.deepEqual(chrome.navigated, [101]);
+    assert.deepEqual(chrome.removed, [101]);
+  } finally {
+    chrome.close();
+  }
+});
+test("resume artifact import waits for its regional HH document and reads pinned owned fields", async () => {
+  const chrome = browser(
+    (url) =>
+      new URL(url).pathname === "/resume/resume-one"
+        ? html(
+            {
+              applicantResume: {
+                forbidden: null,
+                applicantUserStatuses: {
+                  "101": { jobSearchStatus: "synthetic" },
+                },
+                _attributes: {
+                  id: "42",
+                  hash: "resume-one",
+                  user: "101",
+                  permission: "edit",
+                },
+                advancedKeySkills: [
+                  { id: 1, name: "Synthetic skill", general: false },
+                ],
+                keySkills: [{ string: "Synthetic skill" }],
+                resumeApplicantSkills: [
+                  { id: 1, name: "Synthetic skill", category: "SKILL" },
+                ],
+              },
+            },
+            '<h1 data-qa="resume-block-title-position">Synthetic engineer</h1><div data-qa="resume-about-card"><p>Synthetic profile description.</p></div><div data-qa="skills-card"><div data-qa="skill-tag-1">Synthetic skill</div></div>',
+          )
+        : pages(url),
+    (url) => url.replace("https://hh.ru", "https://kaliningrad.hh.ru"),
+  );
+  const get = chrome.api.tabs.get;
+  const inject = chrome.api.scripting.executeScript;
+  let pending = true;
+  let ownedReads = 0;
+  let artifactReads = 0;
+  chrome.api.tabs.get = async (id) => {
+    const tab = await get(id);
+    if (id === 101 && ++ownedReads === 1) {
+      return {
+        ...tab,
+        url: "about:blank",
+        status: "complete",
+        pendingUrl: "https://kaliningrad.hh.ru/resume/resume-one",
+      };
+    }
+    if (id === 101) pending = false;
+    return tab;
+  };
+  chrome.api.scripting.executeScript = async (script) => {
+    if (script.target.tabId === 101) assert.equal(pending, false);
+    if (script.func.name === "readPublicationResumeArtifacts") {
+      artifactReads++;
+      assert.equal(script.target.tabId, 101);
+      assert.deepEqual(script.target.documentIds, [
+        chrome.tabs.get(101)!.documentId,
+      ]);
+    }
+    return inject(script);
+  };
+  try {
+    const result = await createChromeExecution(
+      chrome.api,
+      {},
+      { load: async () => null },
+    ).execute(
+      job({
+        kind: "read_resume_artifact",
+        resumeId: "resume-one",
+        internalId: "42",
+      }),
+    );
+    assert.equal(result.outcome, "confirmed");
+    assert.ok(result.result?.kind === "read_resume_artifact");
+    const artifact = result.result.artifact;
+    assert.deepEqual(
+      { ...artifact, keySkills: [...artifact.keySkills] },
+      {
+        kind: "resume_artifact_readback",
+        readerVersion: "hh-owned-resume-dom-v1",
+        hhAccountKey: "hh-applicant-101",
+        resumeId: "resume-one",
+        internalId: "42",
+        headline: "Synthetic engineer",
+        about: "Synthetic profile description.",
+        keySkills: ["Synthetic skill"],
+      },
+    );
+    assert.equal(artifactReads, 1);
+    assert.deepEqual(chrome.removed, [101]);
+    assert.equal(chrome.tabs.size, 1);
+  } finally {
+    chrome.close();
+  }
+});
+test("pending navigation to another resource blocks reading and preserves the tab", async () => {
+  for (const pendingUrl of [
+    "https://example.invalid/user-page",
+    "https://kaliningrad.hh.ru.example.invalid/resume/resume-one",
+    "http://kaliningrad.hh.ru/resume/resume-one",
+    "https://user@kaliningrad.hh.ru/resume/resume-one",
+    "https://kaliningrad.hh.ru:8443/resume/resume-one",
+    "https://kaliningrad.hh.ru/resume/another-resume",
+    "https://kaliningrad.hh.ru/resume/resume-one?changed=1",
+    "https://kaliningrad.hh.ru/resume/resume-one#changed",
+  ]) {
+    const chrome = browser(pages);
+    const get = chrome.api.tabs.get;
+    const inject = chrome.api.scripting.executeScript;
+    let ownedInjections = 0;
+    chrome.api.tabs.get = async (id) => ({
+      ...(await get(id)),
+      ...(id === 101 ? { pendingUrl } : {}),
+    });
+    chrome.api.scripting.executeScript = async (script) => {
+      if (script.target.tabId === 101) ownedInjections++;
+      return inject(script);
+    };
+    try {
+      const result = await createChromeExecution(
+        chrome.api,
+        {},
+        { load: async () => null },
+      ).execute(
+        job({
+          kind: "read_profile",
+          includeResumeIds: ["resume-one"],
+          includeProfileText: false,
+        }),
+      );
+      assert.equal(result.outcome, "needs_user");
+      assert.equal(result.evidence.reasonCode, "unexpected_hh_navigation");
+      assert.equal(result.result, undefined);
+      assert.equal(ownedInjections, 0);
+      assert.ok(chrome.tabs.has(101));
+      assert.deepEqual(chrome.removed, []);
+    } finally {
+      chrome.close();
+    }
+  }
+});
+test("a tab completing after the page or lease deadline is never read", async (t) => {
+  const now = Date.now();
+  let clock = now;
+  t.mock.method(Date, "now", () => clock);
+  for (const elapsed of [20_001, 120_001]) {
+    clock = now;
+    const chrome = browser(pages);
+    const get = chrome.api.tabs.get;
+    const inject = chrome.api.scripting.executeScript;
+    let ownedInjections = 0;
+    chrome.api.tabs.get = async (id) => {
+      const tab = await get(id);
+      if (id === 101) clock = now + elapsed;
+      return tab;
+    };
+    chrome.api.scripting.executeScript = async (script) => {
+      if (script.target.tabId === 101) ownedInjections++;
+      return inject(script);
+    };
+    try {
+      const result = await createChromeExecution(
+        chrome.api,
+        {},
+        { load: async () => null },
+      ).execute(
+        job(
+          {
+            kind: "read_profile",
+            includeResumeIds: ["resume-one"],
+            includeProfileText: false,
+          },
+          { expiresAt: new Date(now + 120_000).toISOString() },
+        ),
+      );
+      assert.equal(result.outcome, "needs_user");
+      assert.equal(
+        result.evidence.reasonCode,
+        elapsed < 120_000 ? "hh_page_timeout" : "lease_expired",
+      );
+      assert.equal(result.result, undefined);
+      assert.equal(ownedInjections, 0);
+    } finally {
+      chrome.close();
+    }
+  }
+});
+test("a pending user navigation after reading cannot confirm or close the owned tab", async () => {
+  for (const observation of [
+    { pendingUrl: "https://example.invalid/user-page" },
+    // Chrome can hide a pending URL outside the granted host permissions.
+    { status: "loading", pendingUrl: undefined },
+  ]) {
+    const chrome = browser(pages);
+    const get = chrome.api.tabs.get;
+    let userNavigation = false;
+    chrome.afterRead(() => {
+      userNavigation = true;
+    });
+    chrome.api.tabs.get = async (id) => ({
+      ...(await get(id)),
+      ...(id === 101 && userNavigation ? observation : {}),
+    });
+    try {
+      const result = await createChromeExecution(
+        chrome.api,
+        {},
+        { load: async () => null },
+      ).execute(
+        job({
+          kind: "read_profile",
+          includeResumeIds: ["resume-one"],
+          includeProfileText: false,
+        }),
+      );
+      assert.equal(result.outcome, "needs_user");
+      assert.equal(result.evidence.reasonCode, "unexpected_hh_navigation");
+      assert.equal(result.result, undefined);
+      assert.ok(chrome.tabs.has(101));
+      assert.deepEqual(chrome.removed, []);
+    } finally {
+      chrome.close();
+    }
+  }
+});
+test("a pending user navigation is not overwritten when the next resource is requested", async () => {
+  for (const observation of [
+    { pendingUrl: "https://example.invalid/user-page" },
+    { status: "loading", pendingUrl: undefined },
+  ]) {
+    const chrome = browser(pages);
+    const get = chrome.api.tabs.get;
+    let pageRead = false;
+    let subsequentReads = 0;
+    chrome.afterRead(() => {
+      pageRead = true;
+    });
+    chrome.api.tabs.get = async (id) => ({
+      ...(await get(id)),
+      ...(id === 101 && pageRead && ++subsequentReads >= 3 ? observation : {}),
+    });
+    try {
+      const result = await createChromeExecution(
+        chrome.api,
+        {},
+        { load: async () => null },
+      ).execute(
+        job({
+          kind: "read_profile",
+          includeResumeIds: ["resume-one", "resume-two"],
+          includeProfileText: false,
+        }),
+      );
+      assert.equal(result.outcome, "needs_user");
+      assert.equal(result.evidence.reasonCode, "unexpected_hh_navigation");
+      assert.equal(result.result, undefined);
+      assert.deepEqual(chrome.navigated, []);
+      assert.ok(chrome.tabs.has(101));
+      assert.deepEqual(chrome.removed, []);
+    } finally {
+      chrome.close();
+    }
+  }
+});
 test("user navigation takes a created tab out of executor ownership without closing it", async () => {
   const chrome = browser(pages);
   chrome.afterRead(() => {

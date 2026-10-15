@@ -21,7 +21,7 @@ import type {
   SearchVacancy,
   ResumeEvidence,
 } from "../shared/companion-protocol.ts";
-import type { ExecutionChromeApi } from "../shared/chrome-api.ts";
+import type { CompanionTab, ExecutionChromeApi } from "../shared/chrome-api.ts";
 
 const HH = "https://hh.ru";
 const validId = (value: unknown): value is string =>
@@ -54,6 +54,18 @@ function sameReadTarget(actual: unknown, expected: string): boolean {
   }
 }
 
+function hasPendingNavigation(tab: CompanionTab): boolean {
+  return typeof tab.pendingUrl === "string" && tab.pendingUrl.length > 0;
+}
+
+function committedReadTarget(tab: CompanionTab, expected: string): boolean {
+  return (
+    tab.status === "complete" &&
+    !hasPendingNavigation(tab) &&
+    sameReadTarget(tab.url, expected)
+  );
+}
+
 export function createChromeExecution(
   chromeApi: ExecutionChromeApi,
   transport: Pick<CompanionTransport, "publicDetails"> | null,
@@ -67,6 +79,9 @@ export function createChromeExecution(
     documentId?: string,
   ) {
     const tab = requireRunnableTab(await chromeApi.tabs.get(tabId));
+    if (tab.status !== "complete" || hasPendingNavigation(tab)) {
+      throw new Error("unexpected_hh_navigation");
+    }
     let source;
     try {
       if (typeof tab.url !== "string") throw new Error();
@@ -107,6 +122,7 @@ export function createChromeExecution(
     tabId: number,
     expectedUrl: string,
     job?: CompanionJob,
+    previousUrl?: string,
   ) {
     const deadline = Math.min(
       Date.now() + 20000,
@@ -117,10 +133,24 @@ export function createChromeExecution(
         throw new Error("lease_expired");
       }
       const tab = requireRunnableTab(await chromeApi.tabs.get(tabId));
-      if (tab.status === "complete") {
-        if (!sameReadTarget(tab.url, expectedUrl)) {
-          throw new Error("unexpected_hh_navigation");
-        }
+      if (Date.now() >= deadline) break;
+      // Tabs.url is the last committed document. A newly created tab or an
+      // owned navigation can still report it as complete while pendingUrl
+      // points to the requested resource. Wait without reading that document.
+      const expected = sameReadTarget(tab.url, expectedUrl);
+      const previous =
+        previousUrl !== undefined && sameReadTarget(tab.url, previousUrl);
+      const initialBlank =
+        previousUrl === undefined &&
+        (tab.url === undefined || tab.url === "" || tab.url === "about:blank");
+      if (
+        (hasPendingNavigation(tab) &&
+          !sameReadTarget(tab.pendingUrl, expectedUrl)) ||
+        (!expected && !previous && !initialBlank)
+      ) {
+        throw new Error("unexpected_hh_navigation");
+      }
+      if (tab.status === "complete" && committedReadTarget(tab, expectedUrl)) {
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -151,7 +181,7 @@ export function createChromeExecution(
       return await run(tabId, async (url: string) => {
         const current = requireRunnableTab(await chromeApi.tabs.get(tabId));
         // A user-navigated tab is no longer ours to steer or close.
-        if (!sameReadTarget(current.url, expected)) {
+        if (!committedReadTarget(current, expected)) {
           throw new Error("unexpected_hh_navigation");
         }
         expected = url;
@@ -159,7 +189,7 @@ export function createChromeExecution(
       });
     } finally {
       const current = await chromeApi.tabs.get(tabId).catch(() => null);
-      if (sameReadTarget(current?.url, expected)) {
+      if (current && committedReadTarget(current, expected)) {
         await chromeApi.tabs.remove(tabId).catch(() => {});
       }
     }
@@ -369,11 +399,13 @@ export function createChromeExecution(
         if (Date.parse(job.expiresAt) <= Date.now()) {
           throw new Error("lease_expired");
         }
+        let previousUrl: string | undefined;
         if (url !== currentUrl) {
+          previousUrl = currentUrl;
           await navigate(url);
           currentUrl = url;
         }
-        await loaded(tabId, url, job);
+        await loaded(tabId, url, job, previousUrl);
         let before = await inject(tabId, readVerifiedAccountIdentity, []);
         if (!before.value && operation === "history") {
           before = await inject(
@@ -405,8 +437,8 @@ export function createChromeExecution(
           throw new Error("account_changed");
         }
         if (
-          !sameReadTarget(
-            requireRunnableTab(await chromeApi.tabs.get(tabId)).url,
+          !committedReadTarget(
+            requireRunnableTab(await chromeApi.tabs.get(tabId)),
             url,
           )
         ) {

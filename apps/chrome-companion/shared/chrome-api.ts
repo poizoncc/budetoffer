@@ -4,6 +4,7 @@ import type { StorageArea } from "./companion-protocol.ts";
 export interface CompanionTab {
   id?: number;
   url?: string;
+  pendingUrl?: string;
   status?: string;
   discarded?: boolean;
   frozen?: boolean;
