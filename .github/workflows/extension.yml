@@ -1,0 +1,84 @@
+name: Extension
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extension-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test artifact validation
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Validate public package
+        env:
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+        run: |
+          if [ -n "$RELEASE_TAG" ]; then
+            python3 scripts/validate-release.py --tag "$RELEASE_TAG"
+          else
+            python3 scripts/validate-release.py
+          fi
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify tag package
+        run: python3 scripts/validate-release.py --tag "$RELEASE_TAG"
+      - name: Create, verify and publish release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s release-notes.md
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/existing-releases.json"
+          python3 - "$RUNNER_TEMP/existing-releases.json" <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          pages = json.loads(Path(sys.argv[1]).read_text())
+          if any(release["tag_name"] == os.environ["RELEASE_TAG"] for page in pages for release in page):
+              raise SystemExit("A release already exists for this tag. Refusing to overwrite assets or publish an existing draft.")
+          PY
+          gh release create "$RELEASE_TAG" \
+            distribution/budetoffer-chrome.zip distribution/SHA256SUMS distribution/release.json \
+            --draft --verify-tag --title "Chrome companion ${RELEASE_TAG#v}" --notes-file release-notes.md
+          gh release view "$RELEASE_TAG" --json isDraft,assets > "$RUNNER_TEMP/release-state.json"
+          python3 - "$RUNNER_TEMP/release-state.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          state = json.loads(Path(sys.argv[1]).read_text())
+          expected = {"budetoffer-chrome.zip", "SHA256SUMS", "release.json"}
+          assets = state["assets"]
+          if not state["isDraft"] or len(assets) != len(expected) or {item["name"] for item in assets} != expected:
+              raise SystemExit("Draft release assets do not match the validated package")
+          PY
+          mkdir "$RUNNER_TEMP/release-assets"
+          gh release download "$RELEASE_TAG" --dir "$RUNNER_TEMP/release-assets"
+          for asset in budetoffer-chrome.zip SHA256SUMS release.json; do
+            cmp "distribution/$asset" "$RUNNER_TEMP/release-assets/$asset"
+          done
+          gh release edit "$RELEASE_TAG" --draft=false --latest

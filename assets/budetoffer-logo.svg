@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <title>BudetOffer - Б с двумя валютными чертами</title>
+  <rect width="64" height="64" rx="14" fill="#2563eb"/>
+  <path fill="#fff" fill-rule="evenodd" d="M23 16h22v6H29v7h9c8 0 13 3.5 13 10s-5 10-13 10H23V16Zm6 19v8h9c4.5 0 7-1.5 7-4s-2.5-4-7-4h-9Z"/>
+  <path fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" d="M16 26h17M16 33h17"/>
+</svg>
