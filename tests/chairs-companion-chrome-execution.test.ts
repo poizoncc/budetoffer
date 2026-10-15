@@ -46,6 +46,58 @@ test("history identity requires every nonempty row owner and refuses empty or co
     dom.window.close();
   }
 });
+test("serialized history identity permits HH regions while rejecting unsafe hosts and conflicting owners", () => {
+  const allowed = [
+    "https://hh.ru",
+    "https://kaliningrad.hh.ru",
+    "https://spb.hh.ru",
+  ];
+  const rejected = [
+    "https://hh.ru.example.invalid",
+    "https://kaliningrad.hh.ru.example.invalid",
+    "https://kaliningrad-hh.ru",
+    "http://kaliningrad.hh.ru",
+    "https://kaliningrad.hh.ru:8443",
+    "https://user@kaliningrad.hh.ru",
+    "https://user:password@kaliningrad.hh.ru",
+    "https://kaliningrad.hh.ru.",
+  ];
+  for (const origin of [...allowed, ...rejected]) {
+    const dom = new JSDOM(
+      html({
+        userId: undefined,
+        applicantNegotiations: { topicList: [{ applicantUserId: 101 }] },
+      }),
+      {
+        url: origin + "/applicant/negotiations?filter=active&page=0",
+        runScripts: "outside-only",
+      },
+    );
+    try {
+      const read = () => runSerialized(dom, readHistoryAccountIdentity, []);
+      assert.equal(
+        read(),
+        allowed.includes(origin) ? "hh-applicant-101" : null,
+      );
+      if (allowed.includes(origin)) {
+        dom.reconfigure({ url: origin + "/applicant/negotiations#changed" });
+        assert.equal(read(), null);
+        dom.reconfigure({ url: origin + "/resume/resume-one" });
+        assert.equal(read(), null);
+        dom.reconfigure({ url: origin + "/applicant/negotiations" });
+        dom.window.document.querySelector("template")!.innerHTML =
+          JSON.stringify({
+            ...account(),
+            applicantNegotiations: { topicList: [{ applicantUserId: 202 }] },
+          });
+        assert.equal(read(), null);
+      }
+    } finally {
+      dom.window.close();
+    }
+  }
+});
+
 test("empty history counts, tracking ID and applicant status cannot establish owner identity", () => {
   const dom = new JSDOM(
     html({

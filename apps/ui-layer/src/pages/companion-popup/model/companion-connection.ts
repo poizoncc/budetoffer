@@ -44,7 +44,8 @@ type CompanionChangeArguments =
 function connectionMessage(
   origin: string,
   args: CompanionChangeArguments,
-): CompanionMessage {
+  status: CompanionStatus | null,
+): CompanionMessage | null {
   switch (args[0]) {
     case "chairs:device-status":
     case "chairs:disconnect-device":
@@ -58,7 +59,15 @@ function connectionMessage(
         label: "Chrome на этом компьютере",
         code: displayDeviceCode(args[1].code),
       };
-    case "chairs:accept-onboarding":
+    case "chairs:accept-onboarding": {
+      const version = status?.onboardingVersion;
+      if (
+        typeof version !== "string" ||
+        !version.trim() ||
+        version !== version.trim()
+      ) {
+        return null;
+      }
       return {
         type: args[0],
         origin,
@@ -66,8 +75,9 @@ function connectionMessage(
         terms: true,
         privacy: true,
         computerAwake: true,
-        version: "2026-10-10",
+        version,
       };
+    }
   }
 }
 
@@ -336,7 +346,16 @@ export function useCompanionConnection({
       ) {
         return false;
       }
-      const message = connectionMessage(config.origin, args);
+      const message = connectionMessage(config.origin, args, snapshot.status);
+      if (!message) {
+        setSnapshot((previous) => ({
+          ...previous,
+          error:
+            "Не удалось проверить версию условий. Обновите состояние подключения перед подтверждением.",
+          unavailable: true,
+        }));
+        return false;
+      }
       working.current = true;
       refreshAfterChange.current = false;
       setBusy(true);

@@ -12,7 +12,7 @@ export function readHistoryAccountIdentity(
     const url = new URL(locationHref);
     if (
       url.protocol !== "https:" ||
-      url.hostname !== "hh.ru" ||
+      !/(^|\.)hh\.ru$/u.test(url.hostname) ||
       url.username ||
       url.password ||
       url.port ||

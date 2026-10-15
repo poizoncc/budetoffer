@@ -11,7 +11,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { unzipSync } from "fflate";
+import { strFromU8, unzipSync } from "fflate";
+import popupBuildConfig from "../apps/chrome-companion/vite.config.ts";
 import {
   BFF_API_URL,
   BFF_BASE_URL,
@@ -69,6 +70,10 @@ test("public source configuration uses the cabinet and catalogued network guidan
     "https://hh.ru/*",
     "https://*.hh.ru/*",
   ]);
+  assert.equal(
+    popupBuildConfig.build?.target,
+    `chrome${String(property(manifest, "minimum_chrome_version"))}`,
+  );
 });
 
 test("compiled configuration follows the packaged custom origin and retains local package support", async () => {
@@ -82,7 +87,7 @@ test("compiled configuration follows the packaged custom origin and retains loca
     );
     const origin = "https://cabinet.example.test";
     const entries = unzipSync(await createCompanionArchive({ origin }));
-    for (const name of ["config", "destinations", "ewans"]) {
+    for (const name of ["config", "destinations", "ewans", "onboarding"]) {
       const file = `shared/${name}.js`;
       const content = entries[`budetoffer-chrome/${file}`];
       assert.ok(content, `missing compiled configuration dependency: ${file}`);
@@ -94,6 +99,22 @@ test("compiled configuration follows the packaged custom origin and retains loca
       pathToFileURL(join(directory, "server/shared/config.js")).href
     );
     assertConfig(serverConfig, origin, "BO-COMP-008");
+    const onboardingModule: unknown = await import(
+      pathToFileURL(join(directory, "server/shared/onboarding.js")).href
+    );
+    const onboarding = property(onboardingModule, "COMPANION_ONBOARDING");
+    assert.equal(property(onboarding, "version"), COMPANION_ONBOARDING.version);
+    assert.equal(property(onboarding, "termsUrl"), `${origin}/legal/terms`);
+    assert.equal(property(onboarding, "privacyUrl"), `${origin}/legal/privacy`);
+    const manifestBytes = entries["budetoffer-chrome/manifest.json"];
+    const instructions = entries["budetoffer-chrome/INSTALL.txt"];
+    assert.ok(manifestBytes && instructions);
+    const packagedManifest: unknown = JSON.parse(strFromU8(manifestBytes));
+    assert.ok(
+      strFromU8(instructions).includes(
+        `Chrome ${String(property(packagedManifest, "minimum_chrome_version"))} или новее`,
+      ),
+    );
 
     const localDirectory = join(directory, "local");
     await packageLocalCompanion({ outputDir: localDirectory });

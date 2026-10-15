@@ -370,13 +370,24 @@ it("ignores the first StrictMode lifecycle request while keeping the second subs
 });
 
 it("sends all consent flags only after the explicit onboarding callback", async () => {
-  const fake = fakeClient({ ...ready, onboardingRequired: true });
+  const fake = fakeClient({
+    ...ready,
+    onboardingRequired: true,
+    onboardingVersion: "2026-10-10",
+  });
   const hook = await mount(fake.client);
   expect(
     fake.send.mock.calls.every(
       ([message]) => message.type === "chairs:device-status",
     ),
   ).toBe(true);
+  const currentVersion = "2026-11-15";
+  fake.send.mockResolvedValueOnce({
+    ...ready,
+    onboardingRequired: true,
+    onboardingVersion: currentVersion,
+  });
+  await act(async () => hook.result.current.update());
   fake.send.mockResolvedValueOnce(ready);
   await act(async () =>
     expect(await hook.result.current.change("chairs:accept-onboarding")).toBe(
@@ -390,14 +401,34 @@ it("sends all consent flags only after the explicit onboarding callback", async 
     terms: true,
     privacy: true,
     computerAwake: true,
-    version: "2026-10-10",
+    version: currentVersion,
   });
   await act(async () =>
     expect(await hook.result.current.change("chairs:accept-onboarding")).toBe(
       false,
     ),
   );
-  expect(fake.send).toHaveBeenCalledTimes(2);
+  expect(fake.send).toHaveBeenCalledTimes(3);
+});
+
+it("does not confirm agreements when the worker omitted a usable document revision", async () => {
+  for (const onboardingVersion of [undefined, "", "   ", " 2026-11-15 "]) {
+    const fake = fakeClient({
+      ...ready,
+      onboardingRequired: true,
+      onboardingVersion,
+    });
+    const hook = await mount(fake.client);
+    await act(async () =>
+      expect(await hook.result.current.change("chairs:accept-onboarding")).toBe(
+        false,
+      ),
+    );
+    expect(fake.send).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.stage).toBe("unavailable");
+    expect(hook.result.current.error).toMatch(/версию условий/);
+    hook.unmount();
+  }
 });
 
 it("refreshes after visibility and storage events, while a device expiry blocks work during a pending check", async () => {

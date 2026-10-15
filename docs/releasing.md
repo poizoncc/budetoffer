@@ -4,7 +4,7 @@
 
 ## Подготовьте исходники и архив
 
-1. Обновите версию в `apps/chrome-companion/manifest.json` и `package.json`. Для исправлений используйте новый номер; опубликованные версии не заменяются.
+1. Обновите версию в `apps/chrome-companion/manifest.json`, `package.json` и корневой записи `package-lock.json`. Для исправлений используйте новый номер; опубликованные версии не заменяются.
 2. Установите Node.js 24 и зависимости из публичного npm:
 
    ```bash
@@ -20,12 +20,13 @@
 
 3. Проверьте папку `build/budetoffer-chrome` в Chrome на тестовом аккаунте. Собранные файлы `build/budetoffer-chrome.zip`, `build/SHA256SUMS` и `build/release.json` скопируйте в `distribution/`.
 4. Обновите `CHANGELOG.md` и `release-notes.md`. Укажите изменения и действия пользователя при обновлении.
-5. Установите Gitleaks 8.30.1 и запустите проверку исходников и архива. Для кандидата 0.2.7:
+5. Установите Gitleaks 8.30.1 и запустите проверку исходников и архива. Номер кандидата берётся из `package.json`:
 
    ```bash
    python3 scripts/check-secrets.py --include-untracked
    python3 -m unittest discover -s tests -p 'test_*.py'
-   python3 scripts/validate-release.py --tag v0.2.7
+   release_version=$(node -p 'require("./package.json").version')
+   python3 scripts/validate-release.py --tag "v$release_version"
    ```
 
 Проверка секретов использует локальный Gitleaks, не отправляет исходники сторонним сервисам и раскрывает только расположение потенциальной находки. Подробнее: [исходники и сборка](source.md), [проверка публикации](security-audit.md).
@@ -37,8 +38,9 @@
 3. Создайте и отправьте тег той же версии:
 
    ```bash
-   git tag -a v0.2.7 -m "BudetOffer Chrome 0.2.7"
-   git push origin v0.2.7
+   release_version=$(node -p 'require("./package.json").version')
+   git tag -a "v$release_version" -m "BudetOffer Chrome $release_version"
+   git push origin "v$release_version"
    ```
 
 4. Дождитесь успешного workflow для тега. Он загружает три проверенных файла в черновик и публикует релиз после сверки вложений.

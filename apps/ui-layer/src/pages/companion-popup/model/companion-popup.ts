@@ -36,7 +36,7 @@ export type CompanionMessage =
       terms: true;
       privacy: true;
       computerAwake: true;
-      version: "2026-10-10";
+      version: string;
     };
 export type LocalCompanionApplication = {
   id: string;

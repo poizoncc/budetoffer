@@ -13,6 +13,7 @@ import { dirname, isAbsolute, join, posix, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { strToU8, zipSync } from "fflate";
 import ts from "typescript";
+import { COMPANION_ONBOARDING } from "../apps/chrome-companion/shared/onboarding.ts";
 
 type PackageFile = readonly [name: string, content: string | Uint8Array];
 type PackageOptions = {
@@ -503,7 +504,7 @@ async function writeCompanionPackage({
       `// Static public deployment configuration; no credentials.\nexport const SERVER_ORIGIN = ${JSON.stringify(local ? null : origin)};\nexport const COMPANION_ORIGINS = Object.freeze(${JSON.stringify(local ? ["http://127.0.0.1:6970", cabinet] : [origin])});\n`,
     ],
   ];
-  const documentConfig = `// Build-controlled public document links; no credentials.\nexport const COMPANION_ONBOARDING = Object.freeze(${JSON.stringify({ version: "2026-10-10", termsUrl: `${cabinet}/legal/terms`, privacyUrl: `${cabinet}/legal/privacy` })});\n`;
+  const documentConfig = `// Build-controlled public document links; no credentials.\nexport const COMPANION_ONBOARDING = Object.freeze(${JSON.stringify({ version: COMPANION_ONBOARDING.version, termsUrl: `${cabinet}/legal/terms`, privacyUrl: `${cabinet}/legal/privacy` })});\n`;
   for (const [path, content] of files) {
     await mkdir(dirname(join(outputDir, path)), {
       recursive: true,
@@ -515,7 +516,12 @@ async function writeCompanionPackage({
       { flag: "wx", mode: 0o600 },
     );
   }
-  return { outputDir, origin, files: files.length };
+  return {
+    outputDir,
+    origin,
+    files: files.length,
+    minimumChromeVersion: manifest.minimum_chrome_version,
+  };
 }
 
 export const packageCompanion = (options: {
@@ -533,7 +539,7 @@ export async function createCompanionArchive({ origin }: { origin: string }) {
   try {
     const folder = "budetoffer-chrome";
     const outputDir = join(stage, folder);
-    await packageCompanion({ origin, outputDir });
+    const packaged = await packageCompanion({ origin, outputDir });
     const entries: [string, Uint8Array][] = [];
     for (const name of (await readdir(outputDir, { recursive: true })).sort()) {
       const file = join(outputDir, name);
@@ -547,7 +553,7 @@ export async function createCompanionArchive({ origin }: { origin: string }) {
     entries.push([
       `${folder}/INSTALL.txt`,
       strToU8(
-        `BudetOffer — расширение для Chrome\nКабинет: ${origin}\n\nУстановка на компьютере (Chrome 120 или новее):\n1. Распакуйте архив и сохраните папку budetoffer-chrome на компьютере.\n2. Вставьте chrome://extensions в адресную строку Chrome.\n3. Включите «Режим разработчика».\n4. Нажмите «Загрузить распакованное расширение» и выберите папку budetoffer-chrome, в которой находится manifest.json.\n5. Откройте расширение BudetOffer и нажмите «Получить код входа». Войдите в ${origin}/profile?view=connections#companion-devices и подтвердите этот код. Завершите настройку в расширении.\n6. Войдите в свой аккаунт HH в этом Chrome. Вернитесь в ${origin}/profile?view=resume#base-resume и укажите ссылку на своё резюме.\n\nНа телефоне можно открыть кабинет и подтвердить код, а расширение устанавливается в Chrome на компьютере. Оставляйте компьютер и Chrome включёнными во время выполнения заданий.\nНе удаляйте папку после установки. Для обновления замените её содержимое новой версией и нажмите кнопку обновления расширения на chrome://extensions.\n`,
+        `BudetOffer — расширение для Chrome\nКабинет: ${origin}\n\nУстановка на компьютере (Chrome ${packaged.minimumChromeVersion} или новее):\n1. Распакуйте архив и сохраните папку budetoffer-chrome на компьютере.\n2. Вставьте chrome://extensions в адресную строку Chrome.\n3. Включите «Режим разработчика».\n4. Нажмите «Загрузить распакованное расширение» и выберите папку budetoffer-chrome, в которой находится manifest.json.\n5. Откройте расширение BudetOffer и нажмите «Получить код входа». Войдите в ${origin}/profile?view=connections#companion-devices и подтвердите этот код. Завершите настройку в расширении.\n6. Войдите в свой аккаунт HH в этом Chrome. Вернитесь в ${origin}/profile?view=resume#base-resume и укажите ссылку на своё резюме.\n\nНа телефоне можно открыть кабинет и подтвердить код, а расширение устанавливается в Chrome на компьютере. Оставляйте компьютер и Chrome включёнными во время выполнения заданий.\nНе удаляйте папку после установки. Для обновления замените её содержимое новой версией и нажмите кнопку обновления расширения на chrome://extensions.\n`,
       ),
     ]);
     return zipSync(Object.fromEntries(entries), {

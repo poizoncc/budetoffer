@@ -45,9 +45,11 @@ export function readApplicationOutcomesPage(
   }
   const url = new URL(locationHref);
   if (
-    url.origin !== "https://hh.ru" ||
+    url.protocol !== "https:" ||
+    !/(^|\.)hh\.ru$/u.test(url.hostname) ||
     url.username ||
     url.password ||
+    url.port ||
     url.hash ||
     url.pathname !== "/applicant/negotiations" ||
     !["active", "archived", "deleted"].includes(request.filter) ||

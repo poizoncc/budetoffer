@@ -111,12 +111,84 @@ test("serialized reader returns only exact targets and explicit employer states,
     }
   }
 });
+test("serialized outcomes reader permits exact HH regions and rejects unsafe URLs or foreign ownership", () => {
+  const path = "/applicant/negotiations?filter=active&page=0";
+  const allowed = [
+    "https://hh.ru",
+    "https://kaliningrad.hh.ru",
+    "https://spb.hh.ru",
+  ];
+  const rejected = [
+    "https://hh.ru.example.invalid",
+    "https://kaliningrad.hh.ru.example.invalid",
+    "https://kaliningrad-hh.ru",
+    "http://kaliningrad.hh.ru",
+    "https://kaliningrad.hh.ru:8443",
+    "https://user@kaliningrad.hh.ru",
+    "https://user:password@kaliningrad.hh.ru",
+    "https://kaliningrad.hh.ru.",
+  ];
+  for (const origin of [...allowed, ...rejected]) {
+    const dom = new JSDOM(html(page([topic])), {
+      url: origin + path,
+      runScripts: "outside-only",
+    });
+    try {
+      const read = () =>
+        runSerialized(dom, readApplicationOutcomesPage, [
+          {
+            filter: "active",
+            page: 0,
+            targets: [target],
+            hhAccountKey: "hh-applicant-101",
+          },
+        ]);
+      if (allowed.includes(origin)) {
+        assert.equal(read().observations[0].stage, "rejected");
+        dom.window.document.querySelector("template")!.innerHTML =
+          JSON.stringify({
+            ...account,
+            ...page([{ ...topic, applicantUserId: 202 }]),
+          });
+        assert.throws(read, /account_identity_unverified/u);
+      } else assert.throws(read, /history_target_mismatch/u);
+    } finally {
+      dom.window.close();
+    }
+  }
+  for (const suffix of ["#changed", "&extra=1", "&filter=archived"]) {
+    const dom = new JSDOM(html(page([topic])), {
+      url: allowed[1] + path + suffix,
+      runScripts: "outside-only",
+    });
+    try {
+      assert.throws(
+        () =>
+          runSerialized(dom, readApplicationOutcomesPage, [
+            {
+              filter: "active",
+              page: 0,
+              targets: [target],
+              hhAccountKey: "hh-applicant-101",
+            },
+          ]),
+        /history_target_mismatch/u,
+      );
+    } finally {
+      dom.window.close();
+    }
+  }
+});
+
 function browser(mode = "normal") {
   const tabs = new Map<number, JSDOM>();
   let next = 0;
   const opened: string[] = [];
   let reads = 0;
   function document(url: string) {
+    if (mode === "regional") {
+      url = url.replace("https://hh.ru/", "https://kaliningrad.hh.ru/");
+    }
     const u = new URL(url);
     let data: Record<string, unknown> = {};
     if (u.pathname.startsWith("/resume/")) {
@@ -236,6 +308,26 @@ test("read job owns its tabs, proves resume ID, scans all lists; partial coverag
     }
   }
 });
+test("outcomes jobs follow regional HH redirects and close their own tabs after reading every list", async () => {
+  const f = browser("regional");
+  try {
+    const receipt = await createChromeExecution(
+      f.api,
+      {},
+      { load: async () => null },
+    ).execute(job());
+    assert.equal(receipt.outcome, "confirmed");
+    assert.ok(receipt.result?.kind === "read_application_outcomes");
+    assert.equal(receipt.result.complete, true);
+    assert.equal(receipt.result.pages, 3);
+    assert.equal(receipt.result.observations[0].stage, "rejected");
+    assert.equal(f.reads, 3);
+    assert.equal(f.tabs.size, 0);
+  } finally {
+    f.close();
+  }
+});
+
 test("foreign owner, uncertain pagination, target conflict, empty ownerless list and duplicate topics return no result", async () => {
   for (const mode of [
     "foreign-row",
