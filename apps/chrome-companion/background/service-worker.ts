@@ -1,26 +1,29 @@
-import { createCheckpointStore } from "./checkpoint-store.js";
-import { blockedReceipt, executeJob } from "../hh/executor.js";
+import { createCheckpointStore } from "./checkpoint-store.ts";
+import { blockedReceipt, executeJob } from "../hh/executor.ts";
+import { isRecord } from '../shared/companion-protocol.ts';
+import type { CompanionJob, CompanionReceipt, CompanionTransport, CheckpointStore } from '../shared/companion-protocol.ts';
+interface WorkerOptions { transport: CompanionTransport; checkpoints: CheckpointStore; execute?: (job: CompanionJob) => Promise<CompanionReceipt>; now?: () => number; setTimer?: typeof setTimeout; clearTimer?: typeof clearTimeout }
 
 /** One bounded cycle. Recovery/outbox always precedes leasing. No automatic sends. */
-export function createCompanionWorker({ transport, checkpoints, execute = executeJob, now = () => Date.now(), setTimer = setTimeout, clearTimer = clearTimeout }) {
+export function createCompanionWorker({ transport, checkpoints, execute = executeJob, now = () => Date.now(), setTimer = setTimeout, clearTimer = clearTimeout }: WorkerOptions) {
   let running = false;
-  function readLease(job) {
-    let active = ['read_profile', 'read_resume_artifact', 'read_application_outcomes', 'discover_search', 'verify_vacancy', 'reconcile_history'].includes(job.kind), failed = false, timer, pending, renewals = 0;
+  function readLease(job: CompanionJob) {
+    let active = ['read_profile', 'read_resume_artifact', 'read_application_outcomes', 'discover_search', 'verify_vacancy', 'reconcile_history'].includes(job.kind); let failed = false; let timer: ReturnType<typeof setTimeout> | undefined; let pending: Promise<void> | null = null; let renewals = 0;
     const stopReads = () => { failed = true; active = false; job.expiresAt = new Date(now() - 1).toISOString(); };
-    const schedule = () => { if (active) timer = setTimer(() => {
+    const schedule = () => { if (active) {timer = setTimer(() => {
       if (!active) return;
       pending = (async () => {
         try {
           // Never renew an already expired lease, even if a timer was suspended.
           if (Date.parse(job.expiresAt) <= now() || ++renewals > 30) throw new Error('lease_expired');
           const renewed = await transport.renew(job);
-          const expiry = typeof renewed?.expiresAt === 'string' ? Date.parse(renewed.expiresAt) : NaN;
-          if (!renewed || typeof renewed !== 'object' || Array.isArray(renewed) || Object.keys(renewed).some(key => key !== 'expiresAt') || !Number.isFinite(expiry) || new Date(expiry).toISOString() !== renewed.expiresAt || expiry <= now() || expiry <= Date.parse(job.expiresAt) || expiry > now() + 180000) throw new Error('invalid_lease_renewal');
+          const expiry = isRecord(renewed) && typeof renewed.expiresAt === 'string' ? Date.parse(renewed.expiresAt) : NaN;
+          if (!isRecord(renewed) || Object.keys(renewed).some(key => key !== 'expiresAt') || !Number.isFinite(expiry) || new Date(expiry).toISOString() !== renewed.expiresAt || expiry <= now() || expiry <= Date.parse(job.expiresAt) || expiry > now() + 180000) throw new Error('invalid_lease_renewal');
           job.expiresAt = new Date(expiry).toISOString();
         } catch { stopReads(); }
         finally { pending = null; schedule(); }
       })();
-    }, 30000); };
+    }, 30000);} };
     schedule();
     return {
       async stop() {
@@ -33,7 +36,7 @@ export function createCompanionWorker({ transport, checkpoints, execute = execut
     };
   }
   return {
-    async tick(reconcileOriginalJobId) {
+    async tick(reconcileOriginalJobId?: string) {
       if (running) return { state: "busy" };
       running = true;
       try {
@@ -74,7 +77,7 @@ export function createCompanionWorker({ transport, checkpoints, execute = execut
 }
 
 /** Called only with build-controlled transport. Pairing never enables auto mode. */
-export function installCompanionWorker(chromeApi, transport) {
+export function installCompanionWorker(chromeApi: typeof chrome, transport: CompanionTransport) {
   const checkpoints = createCheckpointStore(chromeApi.storage.local);
   const worker = createCompanionWorker({ transport, checkpoints });
   const tick = () => worker.tick().catch(() => { /* Durable outbox remains for next bounded alarm. */ });

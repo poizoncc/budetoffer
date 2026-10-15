@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { accountMatches, readVerifiedAccountIdentity } from "../apps/chrome-companion/hh/account.js";
-import { executeJob } from "../apps/chrome-companion/hh/executor.js";
-import { createCheckpointStore } from "../apps/chrome-companion/background/checkpoint-store.js";
-import { createCompanionWorker } from "../apps/chrome-companion/background/service-worker.js";
-import { createCompanionTransport } from "../apps/chrome-companion/background/transport.js";
+import { accountMatches, readVerifiedAccountIdentity } from "../apps/chrome-companion/hh/account.ts";
+import { executeJob } from "../apps/chrome-companion/hh/executor.ts";
+import { createCheckpointStore } from "../apps/chrome-companion/background/checkpoint-store.ts";
+import { createCompanionWorker } from "../apps/chrome-companion/background/service-worker.ts";
+import { createCompanionTransport } from "../apps/chrome-companion/background/transport.ts";
 import { JSDOM } from "jsdom";
-import { readResumeIdentity, readNegotiationsPage, matchHistoricalApplication, readVacancy } from "../apps/chrome-companion/hh/actions.js";
+import { readResumeIdentity, readNegotiationsPage, matchHistoricalApplication, readVacancy } from "../apps/chrome-companion/hh/actions.ts";
 
 function storage() { const data: Record<string, unknown> = {}; return { data, async get(key: string) { return { [key]: data[key] }; }, async set(value: Record<string, unknown>) { Object.assign(data, value); }, async remove(key: string) { delete data[key]; } }; }
 const job = { protocolVersion: 1, jobId: "job-1", kind: "apply_vacancy", payload: { kind: "apply_vacancy", coverLetter: "PRIVATE_SYNTHETIC_LETTER" }, hhAccountKey: "account-a", leaseToken: "x".repeat(43), payloadHash: "a".repeat(64), expiresAt: new Date(Date.now() + 60000).toISOString() };
@@ -46,7 +46,7 @@ test('targeted reconciliation executes only exact read jobs and restores origina
     async lease(originalId) { assert.equal(originalId, job.jobId); return { ...job, jobId: 'read-recovery', kind: 'reconcile_history', payload: { kind: 'reconcile_history', originalJobId: job.jobId } }; },
     async receipt(value) { assert.equal(value.jobId, 'read-recovery'); if (++sends === 1) throw new Error('offline'); }
   };
-  const execute = async value => { executions++; return { receiptId: 'read-receipt', jobId: value.jobId, outcome: 'needs_user' }; };
+  const execute = async value => { executions++; return { receiptId: 'read-receipt', jobId: value.jobId, leaseToken: value.leaseToken, payloadHash: value.payloadHash, outcome: 'needs_user', evidence: { hhAccountKey: value.hhAccountKey, observedAt: new Date().toISOString() } }; };
   await assert.rejects(createCompanionWorker({ checkpoints, transport, execute }).tick(job.jobId), /offline/);
   const pending = await checkpoints.load(); assert.equal(pending.reconcileOriginal.jobId, job.jobId); assert.equal(pending.jobId, 'read-recovery');
   assert.ok(!JSON.stringify(backing.data).includes('PRIVATE_SYNTHETIC_LETTER'));

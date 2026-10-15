@@ -5,7 +5,7 @@ const STATE_SELECTORS = Object.freeze({
   submit: ["[data-qa=vacancy-response-submit-popup]", "[data-qa=vacancy-response-submit]"]
 });
 
-function firstText(documentRef, selectors) {
+function firstText(documentRef: Document, selectors: readonly string[]): string {
   for (const selector of selectors) {
     const value = documentRef.querySelector(selector)?.textContent?.trim();
     if (value) return value;
@@ -13,22 +13,22 @@ function firstText(documentRef, selectors) {
   return "";
 }
 
-function collectText(documentRef, selectors) {
+function collectText(documentRef: Document, selectors: readonly string[]): string[] {
   return selectors
     .flatMap((selector) => [...documentRef.querySelectorAll(selector)])
     .map((node) => node.textContent?.trim() ?? "")
     .filter(Boolean);
 }
 
-function hasAny(documentRef, selectors) {
+function hasAny(documentRef: Document, selectors: readonly string[]): boolean {
   return selectors.some((selector) => documentRef.querySelector(selector));
 }
 
-function pageLocation() {
+function pageLocation(): string {
   return globalThis.location?.href ?? "";
 }
 
-function getActiveVacancyState(documentRef = document) {
+function getActiveVacancyState(documentRef: Document = document) {
   const validation = collectText(documentRef, STATE_SELECTORS.validation);
   const text = firstText(documentRef, STATE_SELECTORS.description) || documentRef.body?.innerText || "";
   const canSubmit = hasAny(documentRef, STATE_SELECTORS.submit);
@@ -43,8 +43,8 @@ function getActiveVacancyState(documentRef = document) {
   };
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== "chairs:get-active-vacancy-state") return false;
+chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
+  if (message === null || typeof message !== 'object' || !('type' in message) || message.type !== "chairs:get-active-vacancy-state") return false;
   sendResponse(getActiveVacancyState());
   return true;
 });

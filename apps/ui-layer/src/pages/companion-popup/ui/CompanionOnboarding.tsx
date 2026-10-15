@@ -6,8 +6,8 @@ import {validLegalLink, type CompanionLegalLinks} from '../model/companion-popup
 
 type OnboardingProps = {origin: string; legalLinks?: CompanionLegalLinks; busy: boolean; onAccept: () => void; onOpenDocument: (url: string) => void};
 export function CompanionOnboarding({origin, legalLinks, busy, onAccept, onOpenDocument}: OnboardingProps) {
-  const [adult, setAdult] = useState(false), [terms, setTerms] = useState(false), [privacy, setPrivacy] = useState(false), [awake, setAwake] = useState(false);
-  const termsReady = validLegalLink(legalLinks?.termsUrl, origin), privacyReady = validLegalLink(legalLinks?.privacyUrl, origin);
+  const [adult, setAdult] = useState(false); const [terms, setTerms] = useState(false); const [privacy, setPrivacy] = useState(false); const [awake, setAwake] = useState(false);
+  const termsReady = validLegalLink(legalLinks?.termsUrl, origin); const privacyReady = validLegalLink(legalLinks?.privacyUrl, origin);
   const canContinue = adult && terms && privacy && awake && termsReady && privacyReady;
   return <section className="companion-onboarding space-y-4" aria-labelledby="companion-onboarding-title">
     <div><h2 id="companion-onboarding-title" tabIndex={-1} className="text-xl font-semibold">Перед началом работы</h2><p className="mt-1 text-sm text-muted-foreground">Подтвердите четыре пункта, чтобы завершить подключение.</p></div>

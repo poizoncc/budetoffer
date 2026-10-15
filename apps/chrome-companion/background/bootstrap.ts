@@ -1,29 +1,33 @@
-import { createCompanionTransport } from './transport.js';
-import { createCheckpointStore } from './checkpoint-store.js';
-import { createCompanionWorker } from './service-worker.js';
-import { createChromeExecution } from './execution.js';
-import { createPackagedApplicationExecutor } from './application-execution.js';
-import { COMPANION_ORIGINS } from '../shared/destinations.js';
-import { COMPANION_ONBOARDING } from '../shared/onboarding.js';
-import { ONBOARDING_KEY, legalLinks, onboardingAccepted, acceptedOnboarding } from './onboarding.js';
-import { LOGIN_KEY, LOGIN_ALARM, pairingCode, validDevice, validPendingLogin, publicPendingLogin, publicLoginRequest } from './device-login.js';
+import { createCompanionTransport } from './transport.ts';
+import { createCheckpointStore } from './checkpoint-store.ts';
+import { createCompanionWorker } from './service-worker.ts';
+import { createChromeExecution } from './execution.ts';
+import { createPackagedApplicationExecutor } from './application-execution.ts';
+import { COMPANION_ORIGINS } from '../shared/destinations.ts';
+import { COMPANION_ONBOARDING } from '../shared/onboarding.ts';
+import { ONBOARDING_KEY, legalLinks, onboardingAccepted, acceptedOnboarding } from './onboarding.ts';
+import type { OnboardingConfig } from './onboarding.ts';
+import { LOGIN_KEY, LOGIN_ALARM, pairingCode, validDevice, validPendingLogin, publicPendingLogin, publicLoginRequest } from './device-login.ts';
+import type { Device } from './device-login.ts';
+import { errorMessage, isRecord } from '../shared/companion-protocol.ts';
+import type { CompanionJob, CompanionTransport } from '../shared/companion-protocol.ts';
 
 const KEY = 'chairs-companion-device-v1';
-const ORIGINS = new Set(COMPANION_ORIGINS);
+const ORIGINS = new Set<string>(COMPANION_ORIGINS);
 const ALARM = 'chairs-companion-poll';
 const ERROR_KEY = 'chairs-companion-background-error-v1';
 const UNAVAILABLE = 'Сервер недоступен. Проверьте подключение и включённый компьютер. Фоновая проверка повторится автоматически.';
 
-export function installPairedCompanion(chromeApi, fetchImpl = fetch, { now = () => Date.now(), onboardingConfig = COMPANION_ONBOARDING } = {}) {
+export function installPairedCompanion(chromeApi: typeof chrome, fetchImpl: typeof fetch = fetch, { now = () => Date.now(), onboardingConfig = COMPANION_ONBOARDING }: { now?: () => number; onboardingConfig?: OnboardingConfig } = {}) {
   const storage = chromeApi.storage.local;
   const checkpoints = createCheckpointStore(storage);
   let running = false;
   let pairing = false;
-  const read = async () => (await storage.get(KEY))[KEY];
-  const readPending = async () => (await storage.get(LOGIN_KEY))[LOGIN_KEY];
-  const valid = value => validDevice(value, ORIGINS, now());
-  const consent = async device => onboardingAccepted((await storage.get(ONBOARDING_KEY))[ONBOARDING_KEY], device, onboardingConfig);
-  async function ensureAlarm(name, periodInMinutes) {
+  const read = async (): Promise<unknown> => (await storage.get(KEY))[KEY];
+  const readPending = async (): Promise<unknown> => (await storage.get(LOGIN_KEY))[LOGIN_KEY];
+  const valid = (value: unknown): value is Device => validDevice(value, ORIGINS, now());
+  const consent = async (device: Device) => onboardingAccepted((await storage.get(ONBOARDING_KEY))[ONBOARDING_KEY], device, onboardingConfig);
+  async function ensureAlarm(name: string, periodInMinutes: number) {
     const existing = await chromeApi.alarms.get?.(name);
     if (!existing) await chromeApi.alarms.create(name, { periodInMinutes });
   }
@@ -51,19 +55,21 @@ export function installPairedCompanion(chromeApi, fetchImpl = fetch, { now = () 
       ...(validPendingLogin(pending, ORIGINS, now()) ? { pendingLogin: publicPendingLogin(pending) } : {}),
       ...(typeof backgroundError === 'string' ? { backgroundError } : {}) };
   };
-  async function saveDevice(origin, device) {
-    if (!valid({...device, origin})) throw new Error('invalid_pairing_response');
+  async function saveDevice(origin: string, response: unknown) {
+    if (!isRecord(response)) throw new Error('invalid_pairing_response');
+    const device = {...response, origin};
+    if (!valid(device)) throw new Error('invalid_pairing_response');
     // A replacement device cannot inherit previous agreements or enable work.
     // Checkpoints deliberately remain untouched, including uncertain mutations.
     await storage.set({ [KEY]: {origin, deviceId: device.deviceId, accessToken: device.accessToken, expiresAt: device.expiresAt},
       [ONBOARDING_KEY]: null, [LOGIN_KEY]: null, [ERROR_KEY]: null });
     await chromeApi.alarms.clear?.(LOGIN_ALARM);
   }
-  const pair = async ({ origin, code, label }) => {
+  const pair = async ({ origin, code, label }: { origin: unknown; code: unknown; label: unknown }) => {
     await ready;
     if (pairing || running) throw new Error('companion_busy');
     const normalized = pairingCode(code);
-    if (!ORIGINS.has(origin) || !normalized || typeof label !== 'string' || !label.trim() || label.length > 100) throw new Error('invalid_pairing');
+    if (typeof origin !== 'string' || !ORIGINS.has(origin) || !normalized || typeof label !== 'string' || !label.trim() || label.length > 100) throw new Error('invalid_pairing');
     pairing = true;
     try {
       // A replacement credential may recover the owner's original job. Pairing
@@ -74,15 +80,15 @@ export function installPairedCompanion(chromeApi, fetchImpl = fetch, { now = () 
         credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(15000)
       });
       if (!response.ok) throw new Error('pairing_rejected');
-      const device = await response.json();
+      const device: unknown = await response.json();
       await saveDevice(origin, device);
       return status();
     } finally { pairing = false; }
   };
-  const startLogin = async ({ origin, label }) => {
+  const startLogin = async ({ origin, label }: { origin: unknown; label: unknown }) => {
     await ready;
     if (pairing || running) throw new Error('companion_busy');
-    if (!ORIGINS.has(origin) || typeof label !== 'string' || !label.trim() || label.length > 100) throw new Error('invalid_pairing');
+    if (typeof origin !== 'string' || !ORIGINS.has(origin) || typeof label !== 'string' || !label.trim() || label.length > 100) throw new Error('invalid_pairing');
     pairing = true;
     try {
       if (valid(await read())) throw new Error('companion_busy');
@@ -122,13 +128,13 @@ export function installPairedCompanion(chromeApi, fetchImpl = fetch, { now = () 
       } else if (result.state === 'pending') await storage.set({ [ERROR_KEY]: null });
       else throw new Error('invalid_login_response');
     } catch (error) {
-      if (error?.message === 'login_expired') {
+      if (errorMessage(error) === 'login_expired') {
         await storage.set({ [LOGIN_KEY]: null, [ERROR_KEY]: 'Код входа истёк. Получите новый код в расширении.' });
         await chromeApi.alarms.clear?.(LOGIN_ALARM);
       } else await storage.set({ [ERROR_KEY]: UNAVAILABLE });
     } finally { pairing = false; }
   };
-  const acceptOnboarding = async message => {
+  const acceptOnboarding = async (message: unknown) => {
     await ready;
     if (pairing || running) throw new Error('companion_busy');
     pairing = true;
@@ -154,10 +160,10 @@ export function installPairedCompanion(chromeApi, fetchImpl = fetch, { now = () 
       }, fetchImpl});
       const reader = createChromeExecution(chromeApi, transport, checkpoints);
       const application = createPackagedApplicationExecutor(chromeApi, transport, checkpoints);
-      const executor = {identity:reader.identity,execute:job=>job.kind==='apply_vacancy'?application(job):reader.execute(job)};
+      const executor = {identity:reader.identity,execute:(job: CompanionJob)=>job.kind==='apply_vacancy'?application(job):reader.execute(job)};
       await transport.heartbeat(await executor.identity());
       let previous = await checkpoints.load();
-      let reconcileOriginalJobId;
+      let reconcileOriginalJobId: string | undefined;
       if (previous) {
         let sameDevice = previous.deviceId === device.deviceId && previous.origin === device.origin;
         if (!sameDevice && previous.reconcileOriginal) {
@@ -170,7 +176,7 @@ export function installPairedCompanion(chromeApi, fetchImpl = fetch, { now = () 
         if (!sameDevice || previous.reconcileOriginal || ['authorized', 'reconciling'].includes(previous.phase) || previous.receipt?.outcome==='unknown') {
           const originalId = previous.reconcileOriginal?.jobId ?? previous.jobId;
           const recovered = await transport.recovery(originalId);
-          if (recovered?.jobId !== originalId) throw new Error('invalid_recovery_response');
+          if (!isRecord(recovered) || recovered.jobId !== originalId || typeof recovered.state !== 'string') throw new Error('invalid_recovery_response');
           if (['completed', 'blocked', 'cancelled'].includes(recovered.state)) {
             await checkpoints.clear();
             return;
@@ -180,14 +186,14 @@ export function installPairedCompanion(chromeApi, fetchImpl = fetch, { now = () 
           else if (!sameDevice) return;
         }
       }
-      const boundTransport = {...transport, lease: async originalId => {
+      const boundTransport: CompanionTransport = {...transport, lease: async (originalId?: string) => {
         const job = await transport.lease(originalId);
         return job ? {...job, deviceId: device.deviceId, origin: device.origin} : null;
       }};
       await createCompanionWorker({transport: boundTransport, checkpoints, execute: executor.execute}).tick(reconcileOriginalJobId);
       await storage.set({ [ERROR_KEY]: null });
     } catch (error) {
-      if (error?.message !== 'companion_http_401') throw error;
+      if (errorMessage(error) !== 'companion_http_401') throw error;
       // Only authentication failure revokes local credentials. A missing
       // entitlement (403), network failure or blocked HH job keeps pairing.
       // Never discard the checkpoint: an uncertain submission still needs an
@@ -196,20 +202,20 @@ export function installPairedCompanion(chromeApi, fetchImpl = fetch, { now = () 
       await storage.set({ [ERROR_KEY]: 'Подключение расширения отозвано или срок входа истёк. Войдите снова; незавершённые задания сохраняются для сверки.' });
     } finally { running = false; }
   };
-  const boundedTick = () => void tick().catch(() => storage.set({ [ERROR_KEY]: UNAVAILABLE })).catch(() => {});
-  const resume = () => void (async () => { await ready; await ensureAlarms(); await pollLogin(); boundedTick(); })().catch(() => storage.set({ [ERROR_KEY]: UNAVAILABLE })).catch(() => {});
+  const boundedTick = () => { void tick().catch(() => storage.set({ [ERROR_KEY]: UNAVAILABLE })).catch(() => {}); };
+  const resume = () => { void (async () => { await ready; await ensureAlarms(); await pollLogin(); boundedTick(); })().catch(() => storage.set({ [ERROR_KEY]: UNAVAILABLE })).catch(() => {}); };
   chromeApi.alarms.onAlarm.addListener(alarm => {
     if (alarm.name === ALARM) boundedTick();
     if (alarm.name === LOGIN_ALARM) void pollLogin().catch(() => {});
   });
   chromeApi.runtime.onStartup.addListener(resume);
   chromeApi.runtime.onInstalled?.addListener(resume);
-  chromeApi.runtime.onMessage.addListener((message, sender, respond) => {
-    if (!['chairs:device-status', 'chairs:pair-device', 'chairs:disconnect-device', 'chairs:start-device-login', 'chairs:accept-onboarding'].includes(message?.type)) return false;
+  chromeApi.runtime.onMessage.addListener((message: unknown, sender, respond: (value: unknown) => void) => {
+    if (!isRecord(message) || typeof message.type !== 'string' || !['chairs:device-status', 'chairs:pair-device', 'chairs:disconnect-device', 'chairs:start-device-login', 'chairs:accept-onboarding'].includes(message.type)) return false;
     if (sender.id !== chromeApi.runtime.id || sender.url !== chromeApi.runtime.getURL('popup/index.html')) return false;
     const action = async () => {
-      if (message.type === 'chairs:pair-device') return pair(message);
-      if (message.type === 'chairs:start-device-login') return startLogin(message);
+      if (message.type === 'chairs:pair-device') return pair({ origin: message.origin, code: message.code, label: message.label });
+      if (message.type === 'chairs:start-device-login') return startLogin({ origin: message.origin, label: message.label });
       if (message.type === 'chairs:accept-onboarding') return acceptOnboarding(message);
       if (message.type === 'chairs:disconnect-device') {
         await ready;

@@ -9,6 +9,7 @@
 
    ```bash
    npm ci --registry=https://registry.npmjs.org --ignore-scripts
+   npm run lint
    npm run check
    npm test
    npm run build
@@ -16,12 +17,12 @@
 
 3. Проверьте папку `build/budetoffer-chrome` в Chrome на тестовом аккаунте. Собранные файлы `build/budetoffer-chrome.zip`, `build/SHA256SUMS` и `build/release.json` скопируйте в `distribution/`.
 4. Обновите `CHANGELOG.md` и `release-notes.md`. Укажите изменения и действия пользователя при обновлении.
-5. Установите Gitleaks 8.30.1 и запустите проверку исходников и архива. Для примера версии 0.2.5:
+5. Установите Gitleaks 8.30.1 и запустите проверку исходников и архива. Для примера версии 0.2.6:
 
    ```bash
    python3 scripts/check-secrets.py --include-untracked
    python3 -m unittest discover -s tests -p 'test_*.py'
-   python3 scripts/validate-release.py --tag v0.2.5
+   python3 scripts/validate-release.py --tag v0.2.6
    ```
 
 Проверка секретов использует локальный Gitleaks, не отправляет исходники сторонним сервисам и раскрывает только расположение потенциальной находки. Подробнее: [исходники и сборка](source.md), [проверка публикации](security-audit.md).
@@ -29,12 +30,12 @@
 ## Опубликуйте проверенную версию
 
 1. Сохраните исходники, документы и `distribution` коммитом в `main`, затем отправьте коммит в GitHub.
-2. Дождитесь успешного workflow **Extension** во вкладке [Actions](https://github.com/poizoncc/budetoffer/actions). Он проверяет секреты в файлах и Git-истории, запускает тесты, собирает расширение из опубликованных исходников и побайтно сравнивает его с `distribution`.
+2. Дождитесь успешного workflow **Extension** во вкладке [Actions](https://github.com/poizoncc/budetoffer/actions). Он проверяет секреты в файлах и Git-истории, запускает ESLint и проверяет строгие типы runtime, UI и сборочных скриптов, запускает тесты, компилирует TypeScript и побайтно сравнивает результат с `distribution`.
 3. Создайте и отправьте тег той же версии:
 
    ```bash
-   git tag -a v0.2.5 -m "BudetOffer Chrome 0.2.5"
-   git push origin v0.2.5
+   git tag -a v0.2.6 -m "BudetOffer Chrome 0.2.6"
+   git push origin v0.2.6
    ```
 
 4. Дождитесь успешного workflow для тега. Он загружает три проверенных файла в черновик и публикует релиз после сверки вложений.

@@ -9,9 +9,10 @@ function fixture() {
   let origin = 'http://127.0.0.1:6971';
   const application = {id: 'synthetic', title: 'Synthetic vacancy', source: 'hh.ru', externalId: '123', canonicalUrl: 'https://hh.ru/vacancy/123', status: 'pending', version: 3};
   const requests: {url: string; method: string}[] = [];
-  const api: ChromeLocalApi = {runtime: {getURL: path => new URL(`../apps/chrome-companion/${path}`, import.meta.url).href, sendMessage: async () => ({ok: true, paired: allowed, origin, onboardingRequired: !allowed})}, tabs: {query: async () => [{id: 1, url: application.canonicalUrl}], sendMessage: async () => ({url: application.canonicalUrl})}, scripting: {executeScript: async () => {throw new Error('Unexpected script injection');}}};
+  const api: ChromeLocalApi = {runtime: {getURL: path => new URL(`../apps/chrome-companion/${path.replace(/\.js$/u, '.ts')}`, import.meta.url).href, sendMessage: async () => ({ok: true, paired: allowed, origin, onboardingRequired: !allowed})}, tabs: {query: async () => [{id: 1, url: application.canonicalUrl}], sendMessage: async () => ({url: application.canonicalUrl})}, scripting: {executeScript: async () => {throw new Error('Unexpected script injection');}}};
   globalThis.fetch = async (input, options) => {
     const url = String(input); requests.push({url, method: options?.method ?? 'GET'});
+    if (options?.method === 'POST') return Response.json({application: {...application, status: 'claimed', version: 4}});
     return Response.json(url.includes('/applications?') ? {applications: [application]} : {application});
   };
   return {api, requests, application, deny: () => {allowed = false;}, changeOrigin: () => {origin='http://127.0.0.1:6970';}};

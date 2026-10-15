@@ -1,15 +1,18 @@
 {
   "name": "budetoffer-chrome-companion",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "private": true,
   "type": "module",
-  "engines": {"node": ">=22.12.0"},
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
+    "lint": "eslint --flag unstable_native_nodejs_ts_config --config eslint.companion.config.ts --max-warnings 0 apps/chrome-companion apps/ui-layer/src/pages/companion-popup scripts/build.ts scripts/package-companion.ts",
     "check": "tsc --noEmit",
-    "test:node": "node --experimental-strip-types --test tests/chairs-companion-*.test.ts",
+    "test:node": "node --test tests/chairs-companion-*.test.ts",
     "test:ui": "vitest run --config vitest.config.ts",
     "test": "npm run test:node && npm run test:ui",
-    "build": "node scripts/build.mjs"
+    "build": "node scripts/build.ts"
   },
   "dependencies": {
     "@qrko/shared": "file:vendor/qrko-shared",
@@ -27,12 +30,16 @@
     "@tailwindcss/vite": "4.3.2",
     "@testing-library/jest-dom": "6.9.1",
     "@testing-library/react": "16.3.2",
+    "@types/chrome": "0.3.5",
     "@types/node": "25.9.5",
     "@types/qrcode": "1.5.6",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
     "@vitejs/plugin-react": "6.0.3",
+    "eslint": "9.39.5",
+    "globals": "17.9.0",
     "jsdom": "29.1.1",
+    "neostandard": "0.14.1",
     "tailwindcss": "4.3.2",
     "typescript": "6.0.3",
     "vite": "8.3.3",

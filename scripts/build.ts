@@ -2,7 +2,11 @@ import {createHash} from 'node:crypto';
 import {mkdir, readFile, rm, writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {strFromU8, unzipSync} from 'fflate';
-import {createCompanionArchive} from './package-companion.mjs';
+import {createCompanionArchive} from './package-companion.ts';
+
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
 
 const directory = fileURLToPath(new URL('../build/', import.meta.url));
 const origin = 'https://my.budetoffer.ru';
@@ -19,7 +23,10 @@ for (const [name, content] of Object.entries(entries)) {
   await mkdir(new URL('./', path), {recursive: true});
   await writeFile(path, content);
 }
-const manifest = JSON.parse(strFromU8(entries['budetoffer-chrome/manifest.json']));
-if (manifest.version !== JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version) throw new Error('version_mismatch');
+const manifestBytes = entries['budetoffer-chrome/manifest.json'];
+if (!manifestBytes) throw new Error('missing_manifest');
+const manifest: unknown = JSON.parse(strFromU8(manifestBytes));
+const metadata: unknown = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+if (!record(manifest) || typeof manifest.version !== 'string' || typeof manifest.minimum_chrome_version !== 'string' || !record(metadata) || manifest.version !== metadata.version) throw new Error('version_mismatch');
 await writeFile(new URL('../build/release.json', import.meta.url), JSON.stringify({formatVersion: 1, version: manifest.version, origin, fileName: 'budetoffer-chrome.zip', sha256, size: bytes.byteLength, chromeMinimumVersion: manifest.minimum_chrome_version}, null, 2) + '\n');
 console.log(JSON.stringify({version: manifest.version, origin, sha256, archive: 'build/budetoffer-chrome.zip', unpacked: 'build/budetoffer-chrome'}));

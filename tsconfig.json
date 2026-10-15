@@ -3,10 +3,15 @@
     "target": "ES2022",
     "useDefineForClassFields": true,
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "types": ["node", "chrome", "vitest/globals"],
+    "allowJs": false,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "strict": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true,
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
@@ -18,5 +23,6 @@
     "baseUrl": ".",
     "paths": {"@/*": ["apps/ui-layer/src/*"]}
   },
-  "include": ["apps/chrome-companion/src", "apps/ui-layer/src", "vendor"]
+  "include": ["apps/chrome-companion/**/*.ts", "apps/chrome-companion/**/*.tsx", "apps/ui-layer/src", "vendor", "scripts/**/*.ts", "vitest.config.ts", "eslint.companion.config.ts"],
+  "exclude": ["**/*.test.ts", "**/*.test.tsx", "build", "apps/chrome-companion/dist"]
 }

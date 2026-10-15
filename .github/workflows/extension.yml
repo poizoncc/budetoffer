@@ -45,8 +45,9 @@ jobs:
         run: gitleaks git --log-opts=--all --redact=100 --ignore-gitleaks-allow --no-banner --max-archive-depth=3 --timeout=120 .
       - name: Install public build dependencies
         run: npm ci --registry=https://registry.npmjs.org --ignore-scripts
-      - name: Check and test extension source
+      - name: Check strict TypeScript and test extension source
         run: |
+          npm run lint
           npm run check
           npm test
       - name: Test artifact validation

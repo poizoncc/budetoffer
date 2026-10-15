@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {readVerifiedAccountIdentity} from '../apps/chrome-companion/hh/account.js';
+import {readVerifiedAccountIdentity} from '../apps/chrome-companion/hh/account.ts';
 const state = {userType: 'applicant', userId: '123456789', account: {}, hhidAccount: {},
   session: {isFallback: false, securityCheckFailed: false, isMultiAccount: false, hasExtraAccounts: false}};
 const documentFor = (value: unknown) => ({querySelector: () => ({innerHTML: JSON.stringify(value)})});

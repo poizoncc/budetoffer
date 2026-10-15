@@ -26,18 +26,19 @@
 
 ## Исходники и самостоятельная сборка
 
-Можно прочитать [фоновую обработку заданий](apps/chrome-companion/background), [код работы со страницами HH](apps/chrome-companion/hh), [интерфейс расширения](apps/ui-layer/src/pages/companion-popup) и [сборку пакета](scripts/package-companion.mjs).
+Можно прочитать [фоновую обработку заданий](apps/chrome-companion/background), [код работы со страницами HH](apps/chrome-companion/hh), [интерфейс расширения](apps/ui-layer/src/pages/companion-popup) и [сборку пакета](scripts/package-companion.ts). Исходный код расширения и сборки написан на TypeScript; React-интерфейс использует TSX. В устанавливаемом пакете остаётся обычный JavaScript, который выполняет Chrome.
 
-Для сборки нужны Node.js 22.12 или новее и npm. Из корня этого репозитория:
+Для сборки нужны Node.js 22.19 или новее и npm; в CI используется Node.js 24. Из корня этого репозитория:
 
 ```bash
 npm ci --ignore-scripts --registry=https://registry.npmjs.org
+npm run lint
 npm run check
 npm test
 npm run build
 ```
 
-Готовая папка для загрузки через `chrome://extensions` — `build/budetoffer-chrome`, архив — `build/budetoffer-chrome.zip`. Для сборки не нужны аккаунт, токен, закрытые npm-пакеты или исходники сервера BudetOffer.
+Готовая папка для загрузки через `chrome://extensions` — `build/budetoffer-chrome`, архив — `build/budetoffer-chrome.zip`. Для сборки не нужны аккаунт, токен, закрытые npm-пакеты или исходники сервера BudetOffer. `npm run lint` проверяет код с ESLint 9 и neostandard, включая запрет `any` и подавлений TypeScript. `npm run check` проверяет строгие типы фоновых модулей, адаптеров HH, интерфейса и сборочных скриптов; сборка останавливается при ошибках типов.
 
 [Состав исходников и границы доступа](docs/source.md) · [Результаты проверки перед публикацией](docs/security-audit.md)
 

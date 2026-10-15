@@ -35,15 +35,15 @@ function connectionStage(snapshot: ConnectionSnapshot, origin: string, now: numb
 
 export function useCompanionConnection({client, config}: {client: CompanionPopupClient; config: CompanionPopupConfig}) {
   const [snapshot, setSnapshot] = useState<ConnectionSnapshot>({status: null, error: '', unavailable: false});
-  const [checking, setChecking] = useState(true), [busy, setBusy] = useState(false), [now, setNow] = useState(Date.now);
-  const current = useRef(snapshot), mounted = useRef(false), working = useRef(false), revision = useRef(0), lifecycle = useRef(0), refreshAfterChange = useRef(false);
+  const [checking, setChecking] = useState(true); const [busy, setBusy] = useState(false); const [now, setNow] = useState(Date.now);
+  const current = useRef(snapshot); const mounted = useRef(false); const working = useRef(false); const revision = useRef(0); const lifecycle = useRef(0); const refreshAfterChange = useRef(false);
   const activeContext = useRef<{client: CompanionPopupClient; origin: string; serverOnly: boolean} | null>(null);
   const requestedContext = useRef({client, origin: config.origin, serverOnly: config.serverOnly});
   requestedContext.current = {client, origin: config.origin, serverOnly: config.serverOnly};
   current.current = snapshot;
 
   const isCurrentConnection = useCallback(() => {
-    const active = activeContext.current, requested = requestedContext.current;
+    const active = activeContext.current; const requested = requestedContext.current;
     return mounted.current && active?.client === client && active.origin === config.origin && active.serverOnly === config.serverOnly
       && requested.client === client && requested.origin === config.origin && requested.serverOnly === config.serverOnly;
   }, [client, config.origin, config.serverOnly]);
@@ -60,7 +60,7 @@ export function useCompanionConnection({client, config}: {client: CompanionPopup
   const update = useCallback(async () => {
     if (!isCurrentConnection()) return;
     if (working.current) {refreshAfterChange.current = true; return;}
-    const request = ++revision.current, generation = lifecycle.current;
+    const request = ++revision.current; const generation = lifecycle.current;
     setChecking(true);
     try {
       const next = await client.send({type: 'chairs:device-status', origin: config.origin});
@@ -125,7 +125,7 @@ export function useCompanionConnection({client, config}: {client: CompanionPopup
     setBusy(true);
     setChecking(false);
     setSnapshot(previous => ({...previous, error: ''}));
-    const request = ++revision.current, generation = lifecycle.current;
+    const request = ++revision.current; const generation = lifecycle.current;
     try {
       const next = await client.send(message);
       if (!isCurrentConnection() || lifecycle.current !== generation || revision.current !== request) return false;

@@ -32,14 +32,14 @@ export function CompanionLogin({config, status, busy, code, onCodeChange, onStar
   const validPending = pending && DEVICE_CODE_PATTERN.test(pending.userCode) && Number.isFinite(Date.parse(pending.expiresAt));
   const link = validPending ? verificationLink(pending.verificationUri, config.origin, pending.userCode) : null;
   const showQr = Boolean(validPending && !loginExpired && pending.phoneReachable && link?.startsWith('https://'));
-  const [qr, setQr] = useState(''), [qrError, setQrError] = useState(false);
+  const [qr, setQr] = useState(''); const [qrError, setQrError] = useState(false);
   useEffect(() => {
     let active = true;
     setQr(''); setQrError(false);
-    if (showQr && link) void import('qrcode')
+    if (showQr && link) {void import('qrcode')
       .then(({default: qrcode}) => qrcode.toDataURL(link, {width: 176, margin: 2, errorCorrectionLevel: 'M'}))
       .then(value => {if (active) setQr(value);})
-      .catch(() => {if (active) setQrError(true);});
+      .catch(() => {if (active) setQrError(true);});}
     return () => {active = false;};
   }, [showQr, link]);
 

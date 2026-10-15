@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { installPairedCompanion } from '../apps/chrome-companion/background/bootstrap.js';
-import { LOGIN_KEY, LOGIN_ALARM } from '../apps/chrome-companion/background/device-login.js';
-import { ONBOARDING_KEY } from '../apps/chrome-companion/background/onboarding.js';
+import { installPairedCompanion } from '../apps/chrome-companion/background/bootstrap.ts';
+import { LOGIN_KEY, LOGIN_ALARM } from '../apps/chrome-companion/background/device-login.ts';
+import { ONBOARDING_KEY } from '../apps/chrome-companion/background/onboarding.ts';
 import { localControllerFactory } from '../apps/chrome-companion/src/popup/local-client.ts';
 
 const ORIGIN = 'http://127.0.0.1:6971';
@@ -151,7 +151,7 @@ test('simultaneous popup login requests create only one durable challenge',async
 test('server authentication revocation removes pairing and agreements while preserving the uncertain checkpoint',async()=>{
   const f=fixture(),worker=f.install();await flush();await worker.pair({origin:ORIGIN,code:'4GN-5TY',label:'Synthetic'});await worker.acceptOnboarding(agreements);
   let localReads=0;
-  const localApi={runtime:{getURL:(path:string)=>new URL(`../apps/chrome-companion/${path}`,import.meta.url).href,
+  const localApi={runtime:{getURL:(path:string)=>new URL(`../apps/chrome-companion/${path === 'popup/controller.js' ? 'popup/controller.ts' : path}`,import.meta.url).href,
     sendMessage:async()=>({ok:true,...await worker.status()})},tabs:{query:async()=>[{id:1,url:'https://hh.ru/vacancy/123'}],sendMessage:async()=>({url:'https://hh.ru/vacancy/123'})},scripting:{executeScript:async()=>{throw new Error('unexpected_local_injection');}}};
   const originalFetch=globalThis.fetch;
   globalThis.fetch=async()=>{localReads++;return Response.json({applications:[]});};
