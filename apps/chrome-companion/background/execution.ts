@@ -307,6 +307,16 @@ export function createChromeExecution(
         !Number.isInteger(p.maxPages) ||
         p.maxPages < 1 ||
         p.maxPages > 20 ||
+        (p.cursor !== undefined &&
+          (!validId(p.rootJobId) ||
+            !isRecord(p.cursor) ||
+            Object.keys(p.cursor).sort().join() !== "offset,page" ||
+            !Number.isInteger(p.cursor.page) ||
+            p.cursor.page < 0 ||
+            p.cursor.page >= p.maxPages ||
+            !Number.isInteger(p.cursor.offset) ||
+            p.cursor.offset < 0 ||
+            p.cursor.offset > 99)) ||
         (p.searchParameters !== undefined &&
           (!Array.isArray(p.searchParameters) ||
             p.searchParameters.length > 40 ||
@@ -376,7 +386,7 @@ export function createChromeExecution(
         initialUrl = `${HH}/resume/${p.targets[0].resumeId}`;
         break;
       case "discover_search":
-        initialUrl = searchUrl(0);
+        initialUrl = searchUrl(p.cursor?.page ?? 0);
         break;
       case "verify_vacancy":
         initialUrl = `${HH}/vacancy/${p.vacancyId}`;
@@ -521,7 +531,9 @@ export function createChromeExecution(
         let complete = false;
         let length = 0;
         let stop = false;
-        for (let page = 0; page < p.maxPages; page++) {
+        let nextCursor: { page: number; offset: number } | null = null;
+        const start = p.cursor ?? { page: 0, offset: 0 };
+        for (let page = start.page; page < p.maxPages; page++) {
           const url = searchUrl(page);
           const data = await pageRead(url, {
             operation: "search",
@@ -530,7 +542,12 @@ export function createChromeExecution(
           });
           if (!("vacancies" in data)) throw new Error("unsupported_hh_page");
           pages++;
-          const candidateIds = data.vacancies
+          const offset = page === start.page ? start.offset : 0;
+          if (offset > data.vacancies.length) {
+            throw new Error("unsupported_hh_page");
+          }
+          const remaining = data.vacancies.slice(offset);
+          const candidateIds = remaining
             .filter(
               (row) => vacancyId(row.vacancyId) && !seen.has(row.vacancyId),
             )
@@ -567,13 +584,14 @@ export function createChromeExecution(
               /* Older server or unavailable cache: own bounded detail read. */
             }
           }
-          for (const row of data.vacancies) {
+          for (const [index, row] of remaining.entries()) {
             if (seen.has(row.vacancyId)) continue;
             if (
               vacancies.length >= 20 ||
               Date.parse(job.expiresAt) - Date.now() < 25000
             ) {
               stop = true;
+              nextCursor = { page, offset: offset + index };
               break;
             }
             const cached = shared.find(
@@ -587,6 +605,7 @@ export function createChromeExecution(
               ));
             if (length + detail.text.length > 400000) {
               stop = true;
+              nextCursor = { page, offset: offset + index };
               break;
             }
             vacancies.push({
@@ -601,6 +620,11 @@ export function createChromeExecution(
             complete = true;
             break;
           }
+          if (vacancies.length >= 20) {
+            nextCursor =
+              page + 1 < p.maxPages ? { page: page + 1, offset: 0 } : null;
+            break;
+          }
         }
         return {
           kind: p.kind,
@@ -608,6 +632,7 @@ export function createChromeExecution(
           pages,
           complete,
           vacancies,
+          nextCursor,
         };
       }
       if (p.kind === "read_profile") {

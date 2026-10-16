@@ -298,6 +298,7 @@ test("search reads full details, deduplicates across pages and reports bounded p
       savedSearchId: "search-one",
       pages: 2,
       complete: true,
+      nextCursor: null,
       vacancies: [
         {
           vacancyId: "123",
@@ -399,6 +400,75 @@ test("search checks public cache before details and retains legacy fallback with
       "Full synthetic vacancy text",
     );
     assert.equal(JSON.stringify(issued), before);
+  } finally {
+    chrome.close();
+  }
+});
+test("search resumes inside long pages and crosses HH pagination without rereading the first batch", async () => {
+  const visited: string[] = [];
+  const chrome = browser((url) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/search/vacancy") {
+      const page = Number(parsed.searchParams.get("page"));
+      return html({
+        vacancySearchResult: {
+          vacancies: Array.from({ length: page === 0 ? 30 : 15 }, (_, i) => ({
+            vacancyId: 100 + page * 30 + i,
+            name: "Snippet",
+            company: { visibleName: "Synthetic" },
+          })),
+          paging: {
+            pages: [{ page, selected: true }],
+            next: { disabled: page === 1, page: page + 1 },
+          },
+        },
+      });
+    }
+    if (parsed.pathname.startsWith("/vacancy/")) {
+      visited.push(parsed.pathname.split("/").pop()!);
+    }
+    return pages(url);
+  });
+  try {
+    const execution = createChromeExecution(
+      chrome.api,
+      {},
+      { load: async () => null },
+    );
+    const payload: JobPayloads["discover_search"] = {
+      kind: "discover_search",
+      savedSearchId: "search-one",
+      text: "React",
+      maxPages: 2,
+    };
+    const first = await execution.execute(job(payload));
+    assert.ok(first.result?.kind === "discover_search");
+    assert.equal(first.result.vacancies.length, 20);
+    assert.deepEqual(first.result.nextCursor, { page: 0, offset: 20 });
+    assert.equal(first.result.complete, false);
+    const second = await execution.execute(
+      job({
+        ...payload,
+        cursor: first.result.nextCursor!,
+        rootJobId: "root-search",
+      }),
+    );
+    assert.ok(second.result?.kind === "discover_search");
+    assert.equal(second.result.vacancies.length, 20);
+    assert.deepEqual(second.result.nextCursor, { page: 1, offset: 10 });
+    const last = await execution.execute(
+      job({
+        ...payload,
+        cursor: second.result.nextCursor!,
+        rootJobId: "root-search",
+      }),
+    );
+    assert.ok(last.result?.kind === "discover_search");
+    assert.equal(last.result.vacancies.length, 5);
+    assert.equal(last.result.complete, true);
+    assert.equal(last.result.nextCursor, null);
+    assert.equal(new Set(visited).size, 45);
+    assert.equal(visited.length, 45);
   } finally {
     chrome.close();
   }

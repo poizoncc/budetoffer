@@ -43,6 +43,8 @@ export interface JobPayloads {
     savedSearchId: string;
     text: string;
     maxPages: number;
+    cursor?: { page: number; offset: number };
+    rootJobId?: string;
     searchParameters?: [string, string][];
   };
   verify_vacancy: {
@@ -144,6 +146,7 @@ export type JobResult =
       pages: number;
       complete: boolean;
       vacancies: SearchVacancy[];
+      nextCursor?: { page: number; offset: number } | null;
     }
   | {
       kind: "read_application_outcomes";
