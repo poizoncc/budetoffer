@@ -353,9 +353,23 @@ export function readPageEvidence(
   }
   if (!record(state)) fail("unsupported_hh_page");
   if (request.operation === "search") {
+    // A regional HH redirect may change the host, but never the search or filters.
+    let expected: URL;
+    try {
+      expected = new URL(request.expectedUrl);
+    } catch {
+      fail("unsupported_hh_page");
+    }
     if (
-      url.pathname !== "/search/vacancy" ||
-      url.href !== request.expectedUrl ||
+      expected.protocol !== "https:" ||
+      !/(^|\.)hh\.ru$/u.test(expected.hostname) ||
+      expected.username ||
+      expected.password ||
+      expected.port ||
+      expected.hash ||
+      expected.pathname !== "/search/vacancy" ||
+      url.pathname !== expected.pathname ||
+      url.search !== expected.search ||
       !Number.isInteger(request.page) ||
       request.page < 0 ||
       request.page > 19
