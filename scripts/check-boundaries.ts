@@ -253,6 +253,7 @@ const SERIALIZED: readonly SerializedEntry[] = [
   },
   { file: `${COMPANION}hh/actions.ts`, name: "readPageEvidence" },
   { file: `${COMPANION}hh/outcomes.ts`, name: "readApplicationOutcomesPage" },
+  { file: `${COMPANION}hh/full-history.ts`, name: "readFullHistoryPage" },
   {
     file: `${COMPANION}background/publication.ts`,
     name: "readPublicationResumeArtifacts",
@@ -516,7 +517,7 @@ if (
   if (failures.length) process.exitCode = 1;
   else {
     console.log(
-      "Boundaries verified: extension, FSD, QRKO packages and 8 serialized callbacks.",
+      `Boundaries verified: extension, FSD, QRKO packages and ${SERIALIZED.length} serialized callbacks.`,
     );
   }
 }

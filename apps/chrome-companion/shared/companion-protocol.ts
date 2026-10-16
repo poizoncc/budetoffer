@@ -7,6 +7,7 @@ export type JobKind =
   | "read_profile"
   | "read_resume_artifact"
   | "read_application_outcomes"
+  | "read_hh_history"
   | "discover_search"
   | "verify_vacancy"
   | "publish_resume_variant"
@@ -23,6 +24,7 @@ export interface OutcomeTarget {
   historyJobId: string;
 }
 export interface JobPayloads {
+  read_hh_history: { kind: "read_hh_history"; maxPages: number };
   read_profile: {
     kind: "read_profile";
     includeResumeIds: string[];
@@ -136,7 +138,32 @@ export interface ReconciliationResult {
   pages: number;
   complete: boolean;
 }
+export interface FullHistoryObservation {
+  negotiationId: string;
+  vacancyId: string;
+  resumeId: string;
+  resumeInternalId: string;
+  resumeHash: null;
+  title: string | null;
+  company: string | null;
+  employerId: string | null;
+  submittedAt: string | null;
+  initiatedByApplicant: boolean | null;
+  applicantDeclined: boolean | null;
+  stage: string;
+  label: string;
+  observedAt: string;
+  hhList: "active" | "archived" | "deleted";
+}
 export type JobResult =
+  | {
+      kind: "read_hh_history";
+      readerVersion: "hh-full-history-v1";
+      observedAt: string;
+      pages: number;
+      complete: boolean;
+      observations: FullHistoryObservation[];
+    }
   | { kind: "read_profile"; resumes: ResumeEvidence[] }
   | { kind: "read_resume_artifact"; artifact: ResumeArtifact }
   | ({ kind: "verify_vacancy" } & VacancyEvidence)
@@ -299,6 +326,13 @@ export function isCompanionJob(value: unknown): value is CompanionJob {
       );
     case "read_resume_artifact":
       return typeof p.resumeId === "string" && typeof p.internalId === "string";
+    case "read_hh_history":
+      return (
+        Object.keys(p).length === 2 &&
+        Number.isInteger(p.maxPages) &&
+        Number(p.maxPages) >= 3 &&
+        Number(p.maxPages) <= 120
+      );
     case "read_application_outcomes":
       return (
         Array.isArray(p.targets) &&
@@ -409,6 +443,29 @@ export function isJobResult(value: unknown): value is JobResult {
             isVacancyEvidence(row) &&
             isRecord(row) &&
             (row.company === null || typeof row.company === "string"),
+        )
+      );
+    case "read_hh_history":
+      return (
+        value.readerVersion === "hh-full-history-v1" &&
+        typeof value.observedAt === "string" &&
+        Number.isInteger(value.pages) &&
+        typeof value.complete === "boolean" &&
+        Array.isArray(value.observations) &&
+        value.observations.length <= 10000 &&
+        value.observations.every(
+          (row) =>
+            isRecord(row) &&
+            [
+              "negotiationId",
+              "vacancyId",
+              "resumeId",
+              "resumeInternalId",
+              "stage",
+              "label",
+              "observedAt",
+              "hhList",
+            ].every((key) => typeof row[key] === "string"),
         )
       );
     case "read_application_outcomes":

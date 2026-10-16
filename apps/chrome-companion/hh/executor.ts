@@ -11,6 +11,7 @@ const KINDS = new Set([
   "read_profile",
   "read_resume_artifact",
   "read_application_outcomes",
+  "read_hh_history",
   "discover_search",
   "verify_vacancy",
   "publish_resume_variant",
@@ -85,7 +86,8 @@ export async function executeJob(
       evidence: {
         hhAccountKey: job.hhAccountKey,
         observedAt:
-          result.kind === "read_application_outcomes"
+          result.kind === "read_application_outcomes" ||
+          result.kind === "read_hh_history"
             ? result.observedAt
             : new Date().toISOString(),
         ...("vacancyId" in job.payload &&

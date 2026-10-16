@@ -35,6 +35,7 @@ export function createCompanionWorker({
       "read_profile",
       "read_resume_artifact",
       "read_application_outcomes",
+      "read_hh_history",
       "discover_search",
       "verify_vacancy",
       "reconcile_history",

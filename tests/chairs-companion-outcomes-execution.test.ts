@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import { readApplicationOutcomesPage } from "../apps/chrome-companion/hh/outcomes.ts";
+import { readFullHistoryPage } from "../apps/chrome-companion/hh/full-history.ts";
 import { createChromeExecution } from "../apps/chrome-companion/background/execution.ts";
 import { createCompanionWorker } from "../apps/chrome-companion/background/service-worker.ts";
 import type {
@@ -48,6 +49,63 @@ const topic = {
   lastState: "DISCARD",
   declinedByApplicant: false,
 };
+test("full history reader returns only allowed metadata and distinguishes employer invitations", () => {
+  const dom = new JSDOM(
+    html({
+      ...page([
+        {
+          ...topic,
+          initialState: "INVITATION",
+          creationTimeMillis: Date.parse("2026-10-10T10:00:00Z"),
+          password: "SECRET",
+          cookies: "SECRET",
+        },
+      ]),
+      vacanciesShort: {
+        vacanciesList: [
+          {
+            vacancyId: 123,
+            name: "Synthetic engineer",
+            company: { visibleName: "Example" },
+          },
+        ],
+      },
+    }),
+    {
+      url: "https://kaliningrad.hh.ru/applicant/negotiations?filter=active&page=0",
+      runScripts: "outside-only",
+    },
+  );
+  try {
+    const result = runSerialized(dom, readFullHistoryPage, [
+      {
+        filter: "active",
+        page: 0,
+        hhAccountKey: "hh-applicant-101",
+        observedAt: "2026-10-16T10:00:00Z",
+      },
+    ]);
+    assert.equal(result.observations[0].initiatedByApplicant, false);
+    assert.equal(result.observations[0].resumeId, "internal-42");
+    assert.equal(result.observations[0].title, "Synthetic engineer");
+    assert.equal(result.observations[0].company, "Example");
+    assert.equal(JSON.stringify(result).includes("SECRET"), false);
+    assert.throws(
+      () =>
+        runSerialized(dom, readFullHistoryPage, [
+          {
+            filter: "active",
+            page: 0,
+            hhAccountKey: "hh-applicant-202",
+            observedAt: "2026-10-16T10:00:00Z",
+          },
+        ]),
+      /account_identity_unverified/u,
+    );
+  } finally {
+    dom.window.close();
+  }
+});
 const html = (data = {}) =>
   `<template id="HH-Lux-InitialState">${JSON.stringify({ ...account, ...data })}</template>`;
 function job(maxPages = 120): CompanionJob<"read_application_outcomes"> {
@@ -303,6 +361,46 @@ test("read job owns its tabs, proves resume ID, scans all lists; partial coverag
       assert.equal(receipt.result.observations[0].stage, "rejected");
       assert.equal(f.tabs.size, 0);
       assert.ok(f.opened.every((url) => url.startsWith("https://hh.ru/")));
+    } finally {
+      f.close();
+    }
+  }
+});
+test("full history job reads all three lists through owned regional tabs without sending anything", async () => {
+  for (const mode of [
+    "normal",
+    "regional",
+    "foreign-row",
+    "duplicate",
+    "changed-pages",
+  ]) {
+    const f = browser(mode);
+    try {
+      const full = companionJob(
+        { kind: "read_hh_history", maxPages: 120 },
+        { jobId: "full-history" },
+      );
+      const receipt = await createChromeExecution(
+        f.api,
+        {},
+        { load: async () => null },
+      ).execute(full);
+      if (mode === "normal" || mode === "regional") {
+        assert.equal(receipt.outcome, "confirmed");
+        assert.equal(receipt.result?.kind, "read_hh_history");
+        if (receipt.result?.kind === "read_hh_history") {
+          assert.equal(receipt.result.complete, true);
+          assert.equal(receipt.result.pages, 3);
+          assert.equal(receipt.result.observations.length, 1);
+          assert.equal(receipt.result.observedAt, receipt.evidence.observedAt);
+        }
+      } else assert.notEqual(receipt.outcome, "confirmed");
+      assert.equal(f.tabs.size, 0);
+      assert.ok(
+        f.opened.every((url) =>
+          ["/", "/applicant/negotiations"].includes(new URL(url).pathname),
+        ),
+      );
     } finally {
       f.close();
     }

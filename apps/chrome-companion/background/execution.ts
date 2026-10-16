@@ -7,6 +7,7 @@ import type {
 } from "../hh/actions.ts";
 import { readHistoryAccountIdentity } from "../hh/history-account.ts";
 import { readApplicationOutcomesPage } from "../hh/outcomes.ts";
+import { readFullHistoryPage } from "../hh/full-history.ts";
 import { MAX_HISTORY_PAGES } from "../hh/history-limits.ts";
 import { readPublicationResumeArtifacts } from "./publication.ts";
 import { executeJob, blockedReceipt } from "../hh/executor.ts";
@@ -18,6 +19,7 @@ import type {
   CheckpointStore,
   JobResult,
   OutcomeObservation,
+  FullHistoryObservation,
   SearchVacancy,
   ResumeEvidence,
 } from "../shared/companion-protocol.ts";
@@ -239,6 +241,15 @@ export function createChromeExecution(
       throw new Error("lease_expired");
     }
     const p = job.payload;
+    if (
+      p.kind === "read_hh_history" &&
+      (Object.keys(p).sort().join() !== ["kind", "maxPages"].sort().join() ||
+        !Number.isInteger(p.maxPages) ||
+        p.maxPages < 3 ||
+        p.maxPages > MAX_HISTORY_PAGES)
+    ) {
+      throw new Error("invalid_read_payload");
+    }
     if (p.kind === "apply_vacancy" || p.kind === "publish_resume_variant") {
       throw new Error("invalid_read_payload");
     }
@@ -382,6 +393,9 @@ export function createChromeExecution(
     }
     let initialUrl: string;
     switch (p.kind) {
+      case "read_hh_history":
+        initialUrl = `${HH}/applicant/negotiations?filter=active&page=0`;
+        break;
       case "read_application_outcomes":
         initialUrl = `${HH}/resume/${p.targets[0].resumeId}`;
         break;
@@ -642,6 +656,64 @@ export function createChromeExecution(
         }
         if (!resumes.length) await read(HH + "/", undefined, async () => null);
         return { kind: p.kind, resumes };
+      }
+      if (p.kind === "read_hh_history") {
+        const observations = new Map<string, FullHistoryObservation>();
+        let pages = 0;
+        const observedAt = new Date().toISOString();
+        const result = (complete: boolean): JobResult => ({
+          kind: "read_hh_history",
+          readerVersion: "hh-full-history-v1",
+          observedAt: new Date().toISOString(),
+          pages,
+          complete,
+          observations: [...observations.values()],
+        });
+        for (const filter of ["active", "archived", "deleted"] as const) {
+          let expectedPages: number | undefined;
+          for (let page = 0; ; page++) {
+            if (pages >= p.maxPages) return result(false);
+            const data = await read(
+              `${HH}/applicant/negotiations?filter=${filter}&page=${page}`,
+              "history",
+              async (documentId) =>
+                (
+                  await inject(
+                    tabId,
+                    readFullHistoryPage,
+                    [
+                      {
+                        filter,
+                        page,
+                        hhAccountKey: job.hhAccountKey,
+                        observedAt,
+                      },
+                    ],
+                    documentId,
+                  )
+                ).value,
+            );
+            pages++;
+            expectedPages ??= Math.max(1, data.pageCount);
+            if (expectedPages !== Math.max(1, data.pageCount)) {
+              throw new Error("incomplete_history_page");
+            }
+            for (const row of data.observations) {
+              if (observations.has(row.negotiationId)) {
+                throw new Error("history_ambiguous");
+              }
+              observations.set(row.negotiationId, row);
+              if (observations.size > 10000) {
+                throw new Error("incomplete_history_page");
+              }
+            }
+            if (page + 1 === expectedPages && !data.hasNext) break;
+            if (page + 1 >= expectedPages || !data.hasNext) {
+              throw new Error("incomplete_history_page");
+            }
+          }
+        }
+        return result(true);
       }
       if (p.kind === "read_application_outcomes") {
         const resumes = new Map<string, string>();
