@@ -25,7 +25,7 @@ STATIC_FILES = {
     "background/service-worker.js", "background/execution.js", "background/application-execution.js",
     "background/device-login.js", "background/onboarding.js", "background/tab-state.js",
     "background/mutation.js", "background/publication.js", "hh/account.js", "hh/actions.js",
-    "hh/content.js", "hh/executor.js", "hh/outcomes.js", "hh/history-account.js",
+    "hh/content.js", "hh/executor.js", "hh/outcomes.js", "hh/full-history.js", "hh/history-account.js",
     "hh/history-limits.js", "hh/response-form.js", "popup/controller.js", "popup/index.html",
     "shared/config.js", "shared/destinations.js", "shared/onboarding.js",
     "shared/record.js", "shared/companion-protocol.js", "shared/chrome-api.js", "shared/ewans.js",
