@@ -131,13 +131,17 @@ it("serializes rapid prepare clicks before the controller reports its busy state
 
 it("requires explicit cancellation and rechecks the selected row version even without a rendered change", async () => {
   const fake = await mount();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Отменить эту заявку в очереди" }),
-  );
+  await act(async () => {
+    fireEvent.click(
+      screen.getByRole("button", { name: "Отменить эту заявку в очереди" }),
+    );
+  });
   await screen.findByRole("alertdialog");
   expect(fake.controller.act).not.toHaveBeenCalled();
   fake.state.application!.version++;
-  fireEvent.click(screen.getByRole("button", { name: "Отменить заявку" }));
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Отменить заявку" }));
+  });
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(fake.controller.act).not.toHaveBeenCalled();
 });
