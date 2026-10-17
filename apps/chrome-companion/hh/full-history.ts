@@ -89,14 +89,11 @@ export function readFullHistoryPage(
   )?.[1];
   if (
     !owner ||
-    (state.userId !== undefined && state.userId !== owner) ||
+    (state.userId !== undefined && numeric(state.userId) !== owner) ||
     data.topicList.some(
-      (row: unknown) =>
-        !record(row) ||
-        !Number.isSafeInteger(row.applicantUserId) ||
-        String(row.applicantUserId) !== owner,
+      (row: unknown) => !record(row) || numeric(row.applicantUserId) !== owner,
     ) ||
-    (!data.topicList.length && state.userId !== owner)
+    (!data.topicList.length && numeric(state.userId) !== owner)
   ) {
     fail("account_identity_unverified");
   }

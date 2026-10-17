@@ -120,6 +120,32 @@ export function createChromeExecution(
     }
     return { value: response[0].result, documentId: response[0].documentId };
   }
+  async function historyIdentity(tabId: number, documentId?: string) {
+    const observed = await inject(
+      tabId,
+      readHistoryAccountIdentity,
+      [null, null, true],
+      documentId,
+    );
+    const value = observed.value;
+    if (!isRecord(value)) throw new Error("hh_read_failed");
+    if (typeof value.accountKey !== "string" || !value.accountKey) {
+      const safe = new Set([
+        "history_target_mismatch",
+        "unsupported_history_page",
+        "account_identity_unverified",
+        "history_identity_missing",
+        "history_ambiguous",
+        "account_changed",
+      ]);
+      throw new Error(
+        typeof value.reasonCode === "string" && safe.has(value.reasonCode)
+          ? value.reasonCode
+          : "hh_read_failed",
+      );
+    }
+    return { value: value.accountKey, documentId: observed.documentId };
+  }
   async function loaded(
     tabId: number,
     expectedUrl: string,
@@ -432,12 +458,7 @@ export function createChromeExecution(
         await loaded(tabId, url, job, previousUrl);
         let before = await inject(tabId, readVerifiedAccountIdentity, []);
         if (!before.value && operation === "history") {
-          before = await inject(
-            tabId,
-            readHistoryAccountIdentity,
-            [],
-            before.documentId,
-          );
+          before = await historyIdentity(tabId, before.documentId);
         }
         if (!accountMatches(job.hhAccountKey, before.value)) {
           throw new Error("account_identity_unverified");
@@ -450,12 +471,7 @@ export function createChromeExecution(
           before.documentId,
         );
         if (!after.value && operation === "history") {
-          after = await inject(
-            tabId,
-            readHistoryAccountIdentity,
-            [],
-            before.documentId,
-          );
+          after = await historyIdentity(tabId, before.documentId);
         }
         if (!accountMatches(job.hhAccountKey, after.value)) {
           throw new Error("account_changed");

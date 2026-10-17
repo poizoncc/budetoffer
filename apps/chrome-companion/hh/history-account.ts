@@ -2,14 +2,26 @@
  * Empty lists cannot establish identity. Never infer an owner from resume IDs.
  */
 export function readHistoryAccountIdentity(
-  documentRef: Document = globalThis.document,
-  locationHref: string = globalThis.location?.href,
-): string | null {
+  documentRef: Document | null = globalThis.document,
+  locationHref: string | null = globalThis.location?.href,
+  diagnostic = false,
+): string | null | { accountKey: string | null; reasonCode: string | null } {
+  function result(accountKey: string | null, reasonCode: string | null) {
+    return diagnostic ? { accountKey, reasonCode } : accountKey;
+  }
+  function ownerId(value: unknown): string | null {
+    if (typeof value === "number") {
+      return Number.isSafeInteger(value) && value > 0 ? String(value) : null;
+    }
+    return typeof value === "string" && /^[1-9]\d{0,19}$/u.test(value)
+      ? value
+      : null;
+  }
   function record(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
   }
   try {
-    const url = new URL(locationHref);
+    const url = new URL(locationHref ?? globalThis.location.href);
     if (
       url.protocol !== "https:" ||
       !/(^|\.)hh\.ru$/u.test(url.hostname) ||
@@ -19,14 +31,16 @@ export function readHistoryAccountIdentity(
       url.hash ||
       url.pathname !== "/applicant/negotiations"
     ) {
-      return null;
+      return result(null, "history_target_mismatch");
     }
-    const raw = documentRef.querySelector(
+    const raw = (documentRef ?? globalThis.document).querySelector(
       "template#HH-Lux-InitialState",
     )?.innerHTML;
-    if (!raw || raw.length > 4000000) return null;
+    if (!raw || raw.length > 4000000) {
+      return result(null, "unsupported_history_page");
+    }
     const data: unknown = JSON.parse(raw);
-    if (!record(data)) return null;
+    if (!record(data)) return result(null, "unsupported_history_page");
     const session = record(data.session) ? data.session : null;
     if (
       data.userType !== "applicant" ||
@@ -37,31 +51,27 @@ export function readHistoryAccountIdentity(
       session?.isMultiAccount !== false ||
       session?.hasExtraAccounts !== false
     ) {
-      return null;
+      return result(null, "account_identity_unverified");
     }
     const topics = record(data.applicantNegotiations)
       ? data.applicantNegotiations.topicList
       : null;
     if (!Array.isArray(topics) || !topics.length || topics.length > 1000) {
-      return null;
+      return result(null, "history_identity_missing");
     }
     const owners = new Set<string>();
     for (const row of topics) {
-      if (
-        !record(row) ||
-        typeof row.applicantUserId !== "number" ||
-        !Number.isSafeInteger(row.applicantUserId) ||
-        row.applicantUserId <= 0
-      ) {
-        return null;
-      }
-      owners.add(String(row.applicantUserId));
+      const owner = record(row) ? ownerId(row.applicantUserId) : null;
+      if (!owner) return result(null, "history_identity_missing");
+      owners.add(owner);
     }
-    if (owners.size !== 1) return null;
+    if (owners.size !== 1) return result(null, "history_ambiguous");
     const owner = [...owners][0];
-    if (data.userId !== undefined && data.userId !== owner) return null;
-    return `hh-applicant-${owner}`;
+    if (data.userId !== undefined && ownerId(data.userId) !== owner) {
+      return result(null, "account_changed");
+    }
+    return result(`hh-applicant-${owner}`, null);
   } catch {
-    return null;
+    return result(null, "unsupported_history_page");
   }
 }

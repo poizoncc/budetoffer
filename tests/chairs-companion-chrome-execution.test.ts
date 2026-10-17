@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { JSDOM } from "jsdom";
 import { createChromeExecution } from "../apps/chrome-companion/background/execution.ts";
 import { readHistoryAccountIdentity } from "../apps/chrome-companion/hh/history-account.ts";
+import { readFullHistoryPage } from "../apps/chrome-companion/hh/full-history.ts";
 import { MAX_HISTORY_PAGES } from "../apps/chrome-companion/hh/history-limits.ts";
 import { readPageEvidence } from "../apps/chrome-companion/hh/actions.ts";
 import type {
@@ -33,7 +34,10 @@ test("history identity requires every nonempty row owner and refuses empty or co
     [[{ applicantUserId: 101 }], "hh-applicant-101"],
     [[], null],
     [[{ applicantUserId: 101 }, { applicantUserId: 202 }], null],
-    [[{ applicantUserId: "101" }], null],
+    [[{ applicantUserId: "101" }], "hh-applicant-101"],
+    [[{ applicantUserId: "00101" }], null],
+    [[{ applicantUserId: "1e2" }], null],
+    [[{ applicantUserId: Number.MAX_SAFE_INTEGER + 1 }], null],
   ] as const) {
     const dom = new JSDOM(
       html({ userId: undefined, applicantNegotiations: { topicList: rows } }),
@@ -91,6 +95,89 @@ test("serialized history identity permits HH regions while rejecting unsafe host
             applicantNegotiations: { topicList: [{ applicantUserId: 202 }] },
           });
         assert.equal(read(), null);
+      }
+    } finally {
+      dom.window.close();
+    }
+  }
+});
+test("history diagnostic snapshots preserve safe failure codes across serialization and accept matching decimal owners", () => {
+  for (const [userId, rows, reason] of [
+    [101, [{ applicantUserId: "101" }], null],
+    [undefined, [], "history_identity_missing"],
+    [
+      undefined,
+      [{ applicantUserId: 101 }, { applicantUserId: "202" }],
+      "history_ambiguous",
+    ],
+    ["202", [{ applicantUserId: 101 }], "account_changed"],
+  ] as const) {
+    const dom = new JSDOM(
+      html({ userId, applicantNegotiations: { topicList: rows } }),
+      {
+        url: "https://hh.ru/applicant/negotiations",
+        runScripts: "outside-only",
+      },
+    );
+    try {
+      const snapshot = runSerialized(dom, readHistoryAccountIdentity, [
+        null,
+        null,
+        true,
+      ]) as { accountKey: string | null; reasonCode: string | null };
+      assert.deepEqual(Object.keys(snapshot).sort(), [
+        "accountKey",
+        "reasonCode",
+      ]);
+      assert.equal(snapshot.reasonCode, reason);
+      assert.equal(snapshot.accountKey, reason ? null : "hh-applicant-101");
+    } finally {
+      dom.window.close();
+    }
+  }
+});
+test("full history reads numeric and canonical string owners without accepting a foreign owner", () => {
+  const request = {
+    filter: "active" as const,
+    page: 0,
+    hhAccountKey: "hh-applicant-101",
+    observedAt: new Date().toISOString(),
+  };
+  for (const applicantUserId of [101, "101", "202", "00101"]) {
+    const dom = new JSDOM(
+      html({
+        userId: 101,
+        applicantNegotiations: {
+          filterInUse: "active",
+          pageCount: 1,
+          paging: { next: { disabled: true } },
+          topicList: [
+            {
+              id: "1",
+              vacancyId: "123",
+              resumeId: "42",
+              applicantUserId,
+              initialState: "RESPONSE",
+            },
+          ],
+        },
+      }),
+      {
+        url: "https://hh.ru/applicant/negotiations?filter=active&page=0",
+        runScripts: "outside-only",
+      },
+    );
+    try {
+      if (applicantUserId === 101 || applicantUserId === "101") {
+        const page = runSerialized(dom, readFullHistoryPage, [request]) as {
+          observations: unknown[];
+        };
+        assert.equal(page.observations.length, 1);
+      } else {
+        assert.throws(
+          () => runSerialized(dom, readFullHistoryPage, [request]),
+          /account_identity_unverified/,
+        );
       }
     } finally {
       dom.window.close();
@@ -939,7 +1026,7 @@ test("verified homepage and owned resume do not turn ownerless empty history int
       }),
     );
     assert.equal(result.outcome, "needs_user");
-    assert.equal(result.evidence.reasonCode, "account_identity_unverified");
+    assert.equal(result.evidence.reasonCode, "history_identity_missing");
     assert.equal(result.result, undefined);
     assert.equal(chrome.tabs.size, 1);
   } finally {

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BudetOffer Server Companion",
-  "version": "0.2.19",
+  "version": "0.2.20",
   "minimum_chrome_version": "120",
   "description": "BudetOffer companion for https://my.budetoffer.ru.",
   "icons": {
