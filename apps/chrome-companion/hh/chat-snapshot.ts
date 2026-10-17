@@ -8,6 +8,11 @@ export async function readChatSnapshot(
   embedded = false,
 ): Promise<string | null> {
   const url = new URL(globalThis.location.href);
+  // HH can initialize its Chatik root iframe through its integration bridge.
+  // This branch is used only inside the executor's owned tab. API requests
+  // remain pinned to chatId; a root iframe never falls back to DOM contents.
+  const embeddedRoot =
+    embedded && url.hostname === "chatik.hh.ru" && url.pathname === "/";
   if (
     url.protocol !== "https:" ||
     !/(^|\.)hh\.ru$/u.test(url.hostname) ||
@@ -15,7 +20,7 @@ export async function readChatSnapshot(
     url.username ||
     url.password ||
     url.hash ||
-    url.pathname !== `/chat/${chatId}` ||
+    (url.pathname !== `/chat/${chatId}` && !embeddedRoot) ||
     [...url.searchParams].some(([key, value]) => {
       if (url.searchParams.getAll(key).length !== 1) return true;
       // HH's own integration appends these two parameters to its Chatik
@@ -70,6 +75,10 @@ export async function readChatSnapshot(
               : {};
           const envelope = record(value);
           const chat = record(envelope.chat);
+          const responseChatId = chat.id ?? chat.chatId ?? envelope.chatId;
+          if (responseChatId == null || String(responseChatId) !== chatId) {
+            throw new Error("history_target_mismatch");
+          }
           const messages = record(chat.messages);
           let apiPages = 1;
           let paginationState = "not_needed";
@@ -161,7 +170,9 @@ export async function readChatSnapshot(
             return urls;
           }
           async function scrolledPageUrl(): Promise<string | null> {
-            if (url.hostname !== "chatik.hh.ru") return null;
+            // HH also renders the conversation on regional /chat/:id pages.
+            // The document URL was validated above and every observed request
+            // still has to match the exact owned chat and read-only endpoint.
             let scroller: HTMLElement | null = null;
             for (
               let renderAttempt = 0;
@@ -490,7 +501,7 @@ export async function readChatSnapshot(
           for (const itemsLimit of [200, 100, 80, 40, 20, 10, 5, 1]) {
             truncated = false;
             const content = escape(JSON.stringify(project(value, itemsLimit)));
-            const captured = `<section data-captured-chat-id="${chatId}" data-reader-version="0.2.27" data-read-host="${url.hostname}" data-expected-message-count="${expectedMessages ?? ""}" data-read-truncated="${truncated}" data-api-pages="${apiPages}" data-api-has-more="${messages.hasMore === true}" data-read-format="hh-chat-api-v1"><pre data-qa="chat-api-data">${content}</pre></section>`;
+            const captured = `<section data-captured-chat-id="${chatId}" data-reader-version="0.2.28" data-read-host="${url.hostname}" data-expected-message-count="${expectedMessages ?? ""}" data-read-truncated="${truncated}" data-api-pages="${apiPages}" data-api-has-more="${messages.hasMore === true}" data-read-format="hh-chat-api-v1"><pre data-qa="chat-api-data">${content}</pre></section>`;
             if (captured.length <= 60000) return captured;
           }
           apiFailure = "response_limit";
@@ -500,6 +511,7 @@ export async function readChatSnapshot(
       apiFailure = "read_failed";
     }
   }
+  if (embeddedRoot) return diagnostic();
   function visible(element: Element): boolean {
     const style = globalThis.getComputedStyle(element);
     return (
@@ -600,7 +612,7 @@ export async function readChatSnapshot(
   return diagnostic();
   function diagnostic(): string {
     const diagnostics = {
-      reader: "0.2.27",
+      reader: "0.2.28",
       host: url.hostname,
       apiStatus,
       apiFailure,

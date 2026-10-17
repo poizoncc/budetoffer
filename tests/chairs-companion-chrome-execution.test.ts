@@ -782,7 +782,7 @@ test("chat diagnostics stay bounded even on a large unsupported document and unr
     assert.ok(diagnostic);
     assert.ok(diagnostic.length < 20000);
     assert.match(diagnostic, /hh-chat-diagnostic-v1/);
-    assert.match(diagnostic, /0.2.27/);
+    assert.match(diagnostic, /0.2.28/);
     assert.doesNotMatch(diagnostic, /private_body/);
     dom.reconfigure({ url: "https://chatik.hh.ru/chat/78?without_list=1" });
     assert.equal(
@@ -961,98 +961,149 @@ function pages(url: string) {
   return html();
 }
 test("chat pagination discovers the observed history request by scrolling, without executing message buttons", async () => {
-  const dom = new JSDOM(
-    '<div id="history" style="overflow-y:auto"><div data-qa="message">Latest</div><button>Send</button></div>',
-    {
-      url: "https://chatik.hh.ru/chat/77?dest=iframe&microphone=true&without_list=1",
-      runScripts: "outside-only",
-    },
-  );
-  const scroller = dom.window.document.getElementById("history")!;
-  Object.defineProperty(scroller, "scrollHeight", { value: 500 });
-  Object.defineProperty(scroller, "clientHeight", { value: 100 });
-  let top = 100;
-  let scrolled = false;
-  let clicks = 0;
-  Object.defineProperty(scroller, "scrollTop", {
-    get: () => top,
-    set: (value: number) => {
-      top = value;
-      if (value === 0) scrolled = true;
-    },
-  });
-  dom.window.document
-    .querySelector("button")!
-    .addEventListener("click", () => clicks++);
-  const next =
-    "https://chatik.hh.ru/chatik/api/messages?chatId=77&beforeMessageId=2";
-  Object.defineProperty(dom.window.performance, "getEntriesByType", {
-    value: () =>
-      scrolled
-        ? [
-            {
-              name: "https://chatik.hh.ru/chatik/api/messages?chatId=77&action=delete",
-              initiatorType: "img",
-            },
-            { name: next, initiatorType: "fetch" },
-          ]
-        : [],
-  });
-  const requests: string[] = [];
-  dom.window.AbortSignal.timeout = AbortSignal.timeout;
-  dom.window.fetch = (async (
-    input: string | URL | Request,
-    options: RequestInit,
-  ) => {
-    requests.push(String(input));
-    assert.equal(options.method, "GET");
-    return new Response(
-      JSON.stringify(
-        requests.length === 1
-          ? {
+  for (const url of [
+    "https://chatik.hh.ru/chat/77?dest=iframe&microphone=true&without_list=1",
+    "https://kaliningrad.hh.ru/chat/77",
+    "https://chatik.hh.ru/?dest=iframe&microphone=true",
+  ]) {
+    const dom = new JSDOM(
+      '<div id="history" style="overflow-y:auto"><div data-qa="message">Latest</div><button>Send</button></div>',
+      {
+        url,
+        runScripts: "outside-only",
+      },
+    );
+    const scroller = dom.window.document.getElementById("history")!;
+    Object.defineProperty(scroller, "scrollHeight", { value: 500 });
+    Object.defineProperty(scroller, "clientHeight", { value: 100 });
+    let top = 100;
+    let scrolled = false;
+    let clicks = 0;
+    Object.defineProperty(scroller, "scrollTop", {
+      get: () => top,
+      set: (value: number) => {
+        top = value;
+        if (value === 0) scrolled = true;
+      },
+    });
+    dom.window.document
+      .querySelector("button")!
+      .addEventListener("click", () => clicks++);
+    const next =
+      "https://chatik.hh.ru/chatik/api/messages?chatId=77&beforeMessageId=2";
+    Object.defineProperty(dom.window.performance, "getEntriesByType", {
+      value: () =>
+        scrolled
+          ? [
+              {
+                name: "https://chatik.hh.ru/chatik/api/messages?chatId=77&action=delete",
+                initiatorType: "img",
+              },
+              { name: next, initiatorType: "fetch" },
+            ]
+          : [],
+    });
+    const requests: string[] = [];
+    dom.window.AbortSignal.timeout = AbortSignal.timeout;
+    dom.window.fetch = (async (
+      input: string | URL | Request,
+      options: RequestInit,
+    ) => {
+      requests.push(String(input));
+      assert.equal(options.method, "GET");
+      return new Response(
+        JSON.stringify(
+          requests.length === 1
+            ? {
+                chat: {
+                  id: 77,
+                  messages: {
+                    items: [{ id: 2, chatId: 77, text: "Latest" }],
+                    hasMore: true,
+                  },
+                },
+              }
+            : { items: [{ id: 1, chatId: 77, text: "Older" }], hasMore: false },
+        ),
+        { headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+    try {
+      const snapshot = await runSerialized(dom, readChatSnapshot, [
+        "77",
+        2,
+        true,
+      ]);
+      assert.ok(snapshot);
+      assert.match(snapshot, /Older/);
+      assert.match(snapshot, /data-api-pages="2"/);
+      assert.deepEqual(requests, [
+        "https://chatik.hh.ru/chatik/api/chat_data?chatId=77",
+        next,
+      ]);
+      assert.equal(clicks, 0);
+      dom.reconfigure({
+        url: "https://chatik.hh.ru/chat/77?dest=iframe&dest=other&microphone=true",
+      });
+      assert.equal(
+        await runSerialized(dom, readChatSnapshot, ["77", 2, true]),
+        null,
+      );
+      dom.reconfigure({
+        url: "https://chatik.hh.ru/chat/77?dest=other&microphone=true",
+      });
+      assert.equal(
+        await runSerialized(dom, readChatSnapshot, ["77", 2, true]),
+        null,
+      );
+    } finally {
+      dom.window.close();
+    }
+  }
+});
+test("an embedded Chatik root never emits DOM messages when the pinned API chat is unavailable or mismatched", async () => {
+  for (const mismatch of [false, true]) {
+    const dom = new JSDOM(
+      '<main data-chat-id="77"><div data-qa="message" data-message-id="1">private_unbound_message</div></main>',
+      {
+        url: "https://chatik.hh.ru/?dest=iframe&microphone=true",
+        runScripts: "outside-only",
+      },
+    );
+    dom.window.AbortSignal.timeout = AbortSignal.timeout;
+    dom.window.fetch = (async () =>
+      mismatch
+        ? new Response(
+            JSON.stringify({
               chat: {
-                id: 77,
+                id: 78,
                 messages: {
-                  items: [{ id: 2, chatId: 77, text: "Latest" }],
-                  hasMore: true,
+                  items: [{ id: 1, text: "private_other_chat" }],
+                  hasMore: false,
                 },
               },
-            }
-          : { items: [{ id: 1, chatId: 77, text: "Older" }], hasMore: false },
-      ),
-      { headers: { "content-type": "application/json" } },
-    );
-  }) as typeof fetch;
-  try {
-    const snapshot = await runSerialized(dom, readChatSnapshot, [
-      "77",
-      2,
-      true,
-    ]);
-    assert.ok(snapshot);
-    assert.match(snapshot, /Older/);
-    assert.match(snapshot, /data-api-pages="2"/);
-    assert.deepEqual(requests, [
-      "https://chatik.hh.ru/chatik/api/chat_data?chatId=77",
-      next,
-    ]);
-    assert.equal(clicks, 0);
-    dom.reconfigure({
-      url: "https://chatik.hh.ru/chat/77?dest=iframe&dest=other&microphone=true",
-    });
-    assert.equal(
-      await runSerialized(dom, readChatSnapshot, ["77", 2, true]),
-      null,
-    );
-    dom.reconfigure({
-      url: "https://chatik.hh.ru/chat/77?dest=other&microphone=true",
-    });
-    assert.equal(
-      await runSerialized(dom, readChatSnapshot, ["77", 2, true]),
-      null,
-    );
-  } finally {
-    dom.window.close();
+            }),
+            { headers: { "content-type": "application/json" } },
+          )
+        : new Response("", { status: 403 })) as typeof fetch;
+    try {
+      const snapshot = await runSerialized(dom, readChatSnapshot, [
+        "77",
+        1,
+        true,
+      ]);
+      assert.match(snapshot ?? "", /hh-chat-diagnostic-v1/);
+      assert.doesNotMatch(
+        snapshot ?? "",
+        /private_unbound_message|private_other_chat/,
+      );
+      await assert.rejects(
+        () => runSerialized(dom, readChatSnapshot, ["77", 1]),
+        /history_target_mismatch/,
+      );
+    } finally {
+      dom.window.close();
+    }
   }
 });
 test("search reads full details, deduplicates across pages and reports bounded partial coverage", async () => {
