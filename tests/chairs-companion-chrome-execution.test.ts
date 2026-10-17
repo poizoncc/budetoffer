@@ -4,6 +4,7 @@ import { JSDOM } from "jsdom";
 import { createChromeExecution } from "../apps/chrome-companion/background/execution.ts";
 import { readHistoryAccountIdentity } from "../apps/chrome-companion/hh/history-account.ts";
 import { readFullHistoryPage } from "../apps/chrome-companion/hh/full-history.ts";
+import { readChatSnapshot } from "../apps/chrome-companion/hh/chat-snapshot.ts";
 import { MAX_HISTORY_PAGES } from "../apps/chrome-companion/hh/history-limits.ts";
 import { readPageEvidence } from "../apps/chrome-companion/hh/actions.ts";
 import type {
@@ -540,6 +541,86 @@ function browser(
     },
   };
 }
+test("chat capture is bound to fresh owned negotiation identities and never sends a message", async () => {
+  const chrome = browser((url) => {
+    const u = new URL(url);
+    if (u.hostname === "chatik.hh.ru") {
+      return '<main data-chat-id="77"><div data-qa="message-list"><div data-qa="message" data-message-id="9" data-author-type="employer">Заполните анкету <a href="https://forms.example.org/start">Анкета</a><script>private_secret</script><input value="private_input"><span hidden>private_hidden</span></div></div></main>';
+    }
+    let topicId = "3";
+    if (u.searchParams.get("filter") === "active") topicId = "1";
+    if (u.searchParams.get("filter") === "archived") topicId = "2";
+    if (u.pathname === "/applicant/negotiations") {
+      return html({
+        userId: undefined,
+        applicantNegotiations: {
+          filterInUse: u.searchParams.get("filter"),
+          pageCount: "1",
+          paging: { next: { disabled: true } },
+          topicList: [
+            {
+              id: topicId,
+              vacancyId: "123",
+              resumeId: "42",
+              applicantUserId: 101,
+              chatId: 77,
+              conversationMessagesCount: 1,
+              initialState: "RESPONSE",
+            },
+          ],
+        },
+      });
+    }
+    return html();
+  });
+  try {
+    const result = await createChromeExecution(chrome.api, null, {
+      load: async () => null,
+    }).execute(
+      job({
+        kind: "read_hh_correspondence",
+        historyJobId: "history-one",
+        targets: [
+          { negotiationId: "1", vacancyId: "123", resumeInternalId: "42" },
+        ],
+      }),
+    );
+    assert.equal(result.outcome, "confirmed");
+    if (result.result?.kind !== "read_hh_correspondence") {
+      assert.fail("chat result required");
+    }
+    const snapshot = result.result.threads[0].snapshot;
+    assert.ok(snapshot);
+    assert.ok(snapshot.includes("Заполните анкету"));
+    assert.ok(snapshot.includes("https://forms.example.org/start"));
+    assert.ok(!snapshot.includes("private_secret"));
+    assert.ok(!snapshot.includes("private_input"));
+    assert.ok(!snapshot.includes("private_hidden"));
+    assert.equal(chrome.tabs.size, 1);
+  } finally {
+    chrome.close();
+  }
+});
+test("serialized chat reader refuses a different chat and unsafe host before reading the DOM", async () => {
+  for (const url of [
+    "https://chatik.hh.ru/chat/78",
+    "https://chatik.hh.ru.example.invalid/chat/77",
+    "https://chatik.hh.ru/chat/77?other=1",
+  ]) {
+    const dom = new JSDOM("<main>Secret</main>", {
+      url,
+      runScripts: "outside-only",
+    });
+    try {
+      await assert.rejects(
+        () => runSerialized(dom, readChatSnapshot, ["77"]),
+        /history_target_mismatch/,
+      );
+    } finally {
+      dom.window.close();
+    }
+  }
+});
 function pages(url: string) {
   const parsed = new URL(url);
   if (parsed.pathname.startsWith("/vacancy/")) {

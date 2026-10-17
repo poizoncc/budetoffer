@@ -254,6 +254,7 @@ const SERIALIZED: readonly SerializedEntry[] = [
   { file: `${COMPANION}hh/actions.ts`, name: "readPageEvidence" },
   { file: `${COMPANION}hh/outcomes.ts`, name: "readApplicationOutcomesPage" },
   { file: `${COMPANION}hh/full-history.ts`, name: "readFullHistoryPage" },
+  { file: `${COMPANION}hh/chat-snapshot.ts`, name: "readChatSnapshot" },
   {
     file: `${COMPANION}background/publication.ts`,
     name: "readPublicationResumeArtifacts",

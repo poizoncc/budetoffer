@@ -6,12 +6,20 @@ export interface FullHistoryRequest {
   hhAccountKey: string;
   observedAt: string;
   sessionVerifiedEmpty?: boolean;
+  includeChatReferences?: boolean;
 }
 export interface FullHistoryPage {
   observations: FullHistoryObservation[];
   pageCount: number;
   hasNext: boolean;
   filter: HistoryFilter;
+  chatReferences?: Array<{
+    negotiationId: string;
+    vacancyId: string;
+    resumeInternalId: string;
+    chatId: string | null;
+    expectedMessages: number | null;
+  }>;
 }
 /** Packaged read-only projection of the existing Local HH outcomes contract.
  * No list placement, missing row, or initial submission state implies rejection.
@@ -132,6 +140,7 @@ export function readFullHistoryPage(
     fail("incomplete_history_page");
   }
   const observations: FullHistoryObservation[] = [];
+  const chatReferences: NonNullable<FullHistoryPage["chatReferences"]> = [];
   for (const row of data.topicList) {
     if (!record(row)) fail("history_identity_missing");
     const negotiationId = numeric(row.id);
@@ -139,6 +148,20 @@ export function readFullHistoryPage(
     const resumeInternalId = numeric(row.resumeId);
     if (!negotiationId || !vacancyId || !resumeInternalId) {
       fail("history_identity_missing");
+    }
+    if (request.includeChatReferences) {
+      chatReferences.push({
+        negotiationId,
+        vacancyId,
+        resumeInternalId,
+        chatId: numeric(row.chatId),
+        expectedMessages:
+          typeof row.conversationMessagesCount === "number" &&
+          Number.isSafeInteger(row.conversationMessagesCount) &&
+          row.conversationMessagesCount >= 0
+            ? row.conversationMessagesCount
+            : null,
+      });
     }
     let stage = "unknown";
     // Require explicit not-applicant-declined evidence, not truthiness.
@@ -211,5 +234,6 @@ export function readFullHistoryPage(
     pageCount,
     hasNext: emptyPage ? false : next?.disabled === false,
     filter: request.filter,
+    ...(request.includeChatReferences ? { chatReferences } : {}),
   };
 }

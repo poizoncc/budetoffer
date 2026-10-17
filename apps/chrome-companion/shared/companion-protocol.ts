@@ -8,6 +8,7 @@ export type JobKind =
   | "read_resume_artifact"
   | "read_application_outcomes"
   | "read_hh_history"
+  | "read_hh_correspondence"
   | "discover_search"
   | "verify_vacancy"
   | "publish_resume_variant"
@@ -24,6 +25,11 @@ export interface OutcomeTarget {
   historyJobId: string;
 }
 export interface JobPayloads {
+  read_hh_correspondence: {
+    kind: "read_hh_correspondence";
+    historyJobId: string;
+    targets: CorrespondenceTarget[];
+  };
   read_hh_history: { kind: "read_hh_history"; maxPages: number };
   read_profile: {
     kind: "read_profile";
@@ -156,7 +162,24 @@ export interface FullHistoryObservation {
   observedAt: string;
   hhList: "active" | "archived" | "deleted";
 }
+export interface CorrespondenceTarget {
+  negotiationId: string;
+  vacancyId: string;
+  resumeInternalId: string;
+}
+export interface CapturedConversation extends CorrespondenceTarget {
+  chatId: string | null;
+  snapshot: string | null;
+  reason: string | null;
+}
 export type JobResult =
+  | {
+      kind: "read_hh_correspondence";
+      readerVersion: "hh-chat-dom-v1";
+      observedAt: string;
+      complete: true;
+      threads: CapturedConversation[];
+    }
   | {
       kind: "read_hh_history";
       readerVersion: "hh-full-history-v1";
@@ -320,6 +343,25 @@ export function isCompanionJob(value: unknown): value is CompanionJob {
   }
   const p = value.payload;
   switch (p.kind) {
+    case "read_hh_correspondence":
+      return (
+        Object.keys(p).length === 3 &&
+        isIdentifier(p.historyJobId) &&
+        Array.isArray(p.targets) &&
+        p.targets.length > 0 &&
+        p.targets.length <= 20 &&
+        p.targets.every(
+          (t) =>
+            isRecord(t) &&
+            Object.keys(t).length === 3 &&
+            [t.negotiationId, t.vacancyId, t.resumeInternalId].every(
+              (v) => typeof v === "string" && /^[1-9]\d{0,30}$/u.test(v),
+            ),
+        ) &&
+        new Set(
+          p.targets.map((t) => (t as Record<string, unknown>).negotiationId),
+        ).size === p.targets.length
+      );
     case "read_profile":
       return (
         isStringArray(p.includeResumeIds) &&
@@ -471,6 +513,25 @@ export function isJobResult(value: unknown): value is JobResult {
               "observedAt",
               "hhList",
             ].every((key) => typeof row[key] === "string"),
+        )
+      );
+    case "read_hh_correspondence":
+      return (
+        value.readerVersion === "hh-chat-dom-v1" &&
+        typeof value.observedAt === "string" &&
+        value.complete === true &&
+        Array.isArray(value.threads) &&
+        value.threads.length <= 20 &&
+        value.threads.every(
+          (t) =>
+            isRecord(t) &&
+            [t.negotiationId, t.vacancyId, t.resumeInternalId].every(
+              (v) => typeof v === "string",
+            ) &&
+            (t.chatId === null || typeof t.chatId === "string") &&
+            (t.snapshot === null ||
+              (typeof t.snapshot === "string" && t.snapshot.length <= 20000)) &&
+            (t.reason === null || typeof t.reason === "string"),
         )
       );
     case "read_application_outcomes":

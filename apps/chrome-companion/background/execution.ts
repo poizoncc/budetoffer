@@ -8,6 +8,7 @@ import type {
 import { readHistoryAccountIdentity } from "../hh/history-account.ts";
 import { readApplicationOutcomesPage } from "../hh/outcomes.ts";
 import { readFullHistoryPage } from "../hh/full-history.ts";
+import { readChatSnapshot } from "../hh/chat-snapshot.ts";
 import { MAX_HISTORY_PAGES } from "../hh/history-limits.ts";
 import { readPublicationResumeArtifacts } from "./publication.ts";
 import { executeJob, blockedReceipt } from "../hh/executor.ts";
@@ -22,6 +23,7 @@ import type {
   FullHistoryObservation,
   SearchVacancy,
   ResumeEvidence,
+  CapturedConversation,
 } from "../shared/companion-protocol.ts";
 import type { CompanionTab, ExecutionChromeApi } from "../shared/chrome-api.ts";
 
@@ -283,6 +285,26 @@ export function createChromeExecution(
     }
     const p = job.payload;
     if (
+      p.kind === "read_hh_correspondence" &&
+      (!validId(p.historyJobId) ||
+        Object.keys(p).length !== 3 ||
+        !Array.isArray(p.targets) ||
+        !p.targets.length ||
+        p.targets.length > 20 ||
+        p.targets.some(
+          (t) =>
+            !isRecord(t) ||
+            Object.keys(t).length !== 3 ||
+            ![t.negotiationId, t.vacancyId, t.resumeInternalId].every(
+              (v) => typeof v === "string" && /^[1-9]\d{0,30}$/u.test(v),
+            ),
+        ) ||
+        new Set(p.targets.map((t) => t.negotiationId)).size !==
+          p.targets.length)
+    ) {
+      throw new Error("invalid_read_payload");
+    }
+    if (
       p.kind === "read_hh_history" &&
       (Object.keys(p).sort().join() !== ["kind", "maxPages"].sort().join() ||
         !Number.isInteger(p.maxPages) ||
@@ -435,6 +457,7 @@ export function createChromeExecution(
     let initialUrl: string;
     switch (p.kind) {
       case "read_hh_history":
+      case "read_hh_correspondence":
         initialUrl = `${HH}/applicant/negotiations?filter=active&page=0`;
         break;
       case "read_application_outcomes":
@@ -486,7 +509,7 @@ export function createChromeExecution(
           const history = await historyIdentity(
             tabId,
             before.documentId,
-            p.kind === "read_hh_history",
+            p.kind === "read_hh_history" || p.kind === "read_hh_correspondence",
           );
           sessionVerifiedEmpty = history.empty;
           before = {
@@ -718,8 +741,18 @@ export function createChromeExecution(
         if (!resumes.length) await read(HH + "/", undefined, async () => null);
         return { kind: p.kind, resumes };
       }
-      if (p.kind === "read_hh_history") {
+      if (p.kind === "read_hh_history" || p.kind === "read_hh_correspondence") {
         const observations = new Map<string, FullHistoryObservation>();
+        const chatReferences = new Map<
+          string,
+          {
+            negotiationId: string;
+            vacancyId: string;
+            resumeInternalId: string;
+            chatId: string | null;
+            expectedMessages: number | null;
+          }
+        >();
         let pages = 0;
         const observedAt = new Date().toISOString();
         const result = (complete: boolean): JobResult => ({
@@ -733,7 +766,15 @@ export function createChromeExecution(
         for (const filter of ["active", "archived", "deleted"] as const) {
           let expectedPages: number | undefined;
           for (let page = 0; ; page++) {
-            if (pages >= p.maxPages) return result(false);
+            if (
+              pages >=
+              (p.kind === "read_hh_history" ? p.maxPages : MAX_HISTORY_PAGES)
+            ) {
+              if (p.kind === "read_hh_correspondence") {
+                throw new Error("incomplete_history_page");
+              }
+              return result(false);
+            }
             const data = await read(
               `${HH}/applicant/negotiations?filter=${filter}&page=${page}`,
               "history",
@@ -749,6 +790,8 @@ export function createChromeExecution(
                         hhAccountKey: job.hhAccountKey,
                         observedAt,
                         sessionVerifiedEmpty,
+                        includeChatReferences:
+                          p.kind === "read_hh_correspondence",
                       },
                     ],
                     documentId,
@@ -756,6 +799,9 @@ export function createChromeExecution(
                 ).value,
             );
             pages++;
+            for (const ref of data.chatReferences ?? []) {
+              chatReferences.set(ref.negotiationId, ref);
+            }
             expectedPages ??= Math.max(1, data.pageCount);
             if (expectedPages !== Math.max(1, data.pageCount)) {
               throw new Error("incomplete_history_page");
@@ -774,6 +820,90 @@ export function createChromeExecution(
               throw new Error("incomplete_history_page");
             }
           }
+        }
+        if (p.kind === "read_hh_correspondence") {
+          const threads: CapturedConversation[] = [];
+          let totalSize = 0;
+          for (const target of p.targets) {
+            const ref = chatReferences.get(target.negotiationId);
+            if (!ref) {
+              threads.push({
+                ...target,
+                chatId: null,
+                snapshot: null,
+                reason: "history_not_confirmed",
+              });
+              continue;
+            }
+            if (
+              ref.vacancyId !== target.vacancyId ||
+              ref.resumeInternalId !== target.resumeInternalId
+            ) {
+              throw new Error("history_ambiguous");
+            }
+            if (!ref.chatId) {
+              threads.push({
+                ...target,
+                chatId: null,
+                snapshot: null,
+                reason: "chat_missing",
+              });
+              continue;
+            }
+            if (totalSize >= 1780000) {
+              threads.push({
+                ...target,
+                chatId: ref.chatId,
+                snapshot: null,
+                reason: "snapshot_limit",
+              });
+              continue;
+            }
+            const url = `https://chatik.hh.ru/chat/${ref.chatId}`;
+            if (
+              !accountMatches(job.hhAccountKey, await freshSessionIdentity())
+            ) {
+              throw new Error("account_changed");
+            }
+            const snapshot = await withOwnedTab(url, async (chatTab) => {
+              await loaded(chatTab, url, job);
+              const value = await inject(chatTab, readChatSnapshot, [
+                ref.chatId!,
+                ref.expectedMessages,
+              ]);
+              if (
+                !committedReadTarget(
+                  requireRunnableTab(await chromeApi.tabs.get(chatTab)),
+                  url,
+                )
+              ) {
+                throw new Error("unexpected_hh_navigation");
+              }
+              return value.value;
+            });
+            if (
+              !accountMatches(job.hhAccountKey, await freshSessionIdentity())
+            ) {
+              throw new Error("account_changed");
+            }
+            if (Date.parse(job.expiresAt) <= Date.now()) {
+              throw new Error("lease_expired");
+            }
+            if (snapshot) totalSize += snapshot.length;
+            threads.push({
+              ...target,
+              chatId: ref.chatId,
+              snapshot,
+              reason: snapshot ? null : "chat_not_loaded",
+            });
+          }
+          return {
+            kind: "read_hh_correspondence",
+            readerVersion: "hh-chat-dom-v1",
+            observedAt: new Date().toISOString(),
+            complete: true,
+            threads,
+          };
         }
         return result(true);
       }
