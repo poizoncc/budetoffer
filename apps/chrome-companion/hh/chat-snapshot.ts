@@ -16,11 +16,20 @@ export async function readChatSnapshot(
     url.password ||
     url.hash ||
     url.pathname !== `/chat/${chatId}` ||
-    [...url.searchParams].some(
-      ([key, value]) =>
+    [...url.searchParams].some(([key, value]) => {
+      if (url.searchParams.getAll(key).length !== 1) return true;
+      // HH's own integration appends these two parameters to its Chatik
+      // iframe. They select the embedded layout; reading this frame neither
+      // requests microphone access nor executes any chat action.
+      if (embedded && url.hostname === "chatik.hh.ru") {
+        if (key === "dest") return value !== "iframe";
+        if (key === "microphone") return !["true", "false"].includes(value);
+      }
+      return (
         !["without_list", "platform", "theme"].includes(key) ||
-        !/^[A-Za-z0-9_-]{1,32}$/u.test(value),
-    ) ||
+        !/^[A-Za-z0-9_-]{1,32}$/u.test(value)
+      );
+    }) ||
     !/^[1-9]\d{0,30}$/u.test(chatId)
   ) {
     if (embedded) return null;
@@ -63,6 +72,10 @@ export async function readChatSnapshot(
           const chat = record(envelope.chat);
           const messages = record(chat.messages);
           let apiPages = 1;
+          let paginationState = "not_needed";
+          let scrollerFound = false;
+          const observedRequests: Array<{ path: string; queryKeys: string[] }> =
+            [];
           // Older-page URLs must come from HH resources or a request made by
           // the rendered history scroller. Never guess a cursor or call an
           // action endpoint. All requests remain GETs for this owned chat.
@@ -179,7 +192,11 @@ export async function readChatSnapshot(
                 await new Promise<void>((resolve) => setTimeout(resolve, 250));
               }
             }
-            if (!scroller) return null;
+            if (!scroller) {
+              paginationState = "history_scroller_missing";
+              return null;
+            }
+            scrollerFound = true;
             scroller.scrollTop = 1;
             scroller.scrollTop = 0;
             for (let attempt = 0; attempt < 12; attempt++) {
@@ -194,11 +211,40 @@ export async function readChatSnapshot(
                 ) {
                   continue;
                 }
+                // Structural diagnostics only: no query values, chat IDs,
+                // message text, headers or credentials leave the document.
+                try {
+                  const observed = new URL(entry.name);
+                  if (
+                    observed.origin === "https://chatik.hh.ru" &&
+                    /^\/chatik\/api\/[A-Za-z0-9_/-]{1,120}$/u.test(
+                      observed.pathname,
+                    ) &&
+                    observedRequests.length < 12
+                  ) {
+                    const path = observed.pathname.replace(/\d+/gu, ":id");
+                    const queryKeys = [...new Set(observed.searchParams.keys())]
+                      .filter((key) => /^[A-Za-z_]{1,40}$/u.test(key))
+                      .slice(0, 20);
+                    if (
+                      !observedRequests.some(
+                        (item) =>
+                          item.path === path &&
+                          item.queryKeys.join() === queryKeys.join(),
+                      )
+                    ) {
+                      observedRequests.push({ path, queryKeys });
+                    }
+                  }
+                } catch {
+                  /* A malformed resource name provides no evidence. */
+                }
                 const next = messagePageUrl(entries[index].name);
                 if (next) return next;
               }
               await new Promise<void>((resolve) => setTimeout(resolve, 250));
             }
+            paginationState = "history_request_missing";
             return null;
           }
           let pageEvidence: unknown = value;
@@ -209,6 +255,7 @@ export async function readChatSnapshot(
             apiPages < 10 &&
             pageAttempts++ < 12
           ) {
+            paginationState = "page_not_available";
             try {
               const nextUrl =
                 resourceUrls(pageEvidence)[0] ?? (await scrolledPageUrl());
@@ -225,6 +272,7 @@ export async function readChatSnapshot(
                 !nextResponse.ok ||
                 !nextResponse.headers.get("content-type")?.includes("json")
               ) {
+                paginationState = "page_response_unavailable";
                 break;
               }
               const nextRaw = await nextResponse.text();
@@ -273,12 +321,25 @@ export async function readChatSnapshot(
               messages.items = [...merged.values()];
               messages.hasMore = nextMessages.hasMore;
               apiPages++;
+              paginationState = messages.hasMore ? "more_pages" : "complete";
               pageEvidence = nextData;
             } catch {
+              paginationState = "page_read_failed";
               break;
             }
           }
+          envelope.readDiagnostics = {
+            paginationState,
+            scrollerFound,
+            observedRequests,
+          };
           const fields = new Set([
+            "readDiagnostics",
+            "paginationState",
+            "scrollerFound",
+            "observedRequests",
+            "path",
+            "queryKeys",
             "chat",
             "resources",
             "currentParticipantId",
@@ -429,7 +490,7 @@ export async function readChatSnapshot(
           for (const itemsLimit of [200, 100, 80, 40, 20, 10, 5, 1]) {
             truncated = false;
             const content = escape(JSON.stringify(project(value, itemsLimit)));
-            const captured = `<section data-captured-chat-id="${chatId}" data-expected-message-count="${expectedMessages ?? ""}" data-read-truncated="${truncated}" data-api-pages="${apiPages}" data-api-has-more="${messages.hasMore === true}" data-read-format="hh-chat-api-v1"><pre data-qa="chat-api-data">${content}</pre></section>`;
+            const captured = `<section data-captured-chat-id="${chatId}" data-reader-version="0.2.27" data-read-host="${url.hostname}" data-expected-message-count="${expectedMessages ?? ""}" data-read-truncated="${truncated}" data-api-pages="${apiPages}" data-api-has-more="${messages.hasMore === true}" data-read-format="hh-chat-api-v1"><pre data-qa="chat-api-data">${content}</pre></section>`;
             if (captured.length <= 60000) return captured;
           }
           apiFailure = "response_limit";
@@ -539,7 +600,7 @@ export async function readChatSnapshot(
   return diagnostic();
   function diagnostic(): string {
     const diagnostics = {
-      reader: "0.2.26",
+      reader: "0.2.27",
       host: url.hostname,
       apiStatus,
       apiFailure,

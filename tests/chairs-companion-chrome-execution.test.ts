@@ -782,7 +782,7 @@ test("chat diagnostics stay bounded even on a large unsupported document and unr
     assert.ok(diagnostic);
     assert.ok(diagnostic.length < 20000);
     assert.match(diagnostic, /hh-chat-diagnostic-v1/);
-    assert.match(diagnostic, /0.2.26/);
+    assert.match(diagnostic, /0.2.27/);
     assert.doesNotMatch(diagnostic, /private_body/);
     dom.reconfigure({ url: "https://chatik.hh.ru/chat/78?without_list=1" });
     assert.equal(
@@ -963,7 +963,10 @@ function pages(url: string) {
 test("chat pagination discovers the observed history request by scrolling, without executing message buttons", async () => {
   const dom = new JSDOM(
     '<div id="history" style="overflow-y:auto"><div data-qa="message">Latest</div><button>Send</button></div>',
-    { url: "https://chatik.hh.ru/chat/77", runScripts: "outside-only" },
+    {
+      url: "https://chatik.hh.ru/chat/77?dest=iframe&microphone=true&without_list=1",
+      runScripts: "outside-only",
+    },
   );
   const scroller = dom.window.document.getElementById("history")!;
   Object.defineProperty(scroller, "scrollHeight", { value: 500 });
@@ -1021,7 +1024,11 @@ test("chat pagination discovers the observed history request by scrolling, witho
     );
   }) as typeof fetch;
   try {
-    const snapshot = await runSerialized(dom, readChatSnapshot, ["77", 2]);
+    const snapshot = await runSerialized(dom, readChatSnapshot, [
+      "77",
+      2,
+      true,
+    ]);
     assert.ok(snapshot);
     assert.match(snapshot, /Older/);
     assert.match(snapshot, /data-api-pages="2"/);
@@ -1030,6 +1037,20 @@ test("chat pagination discovers the observed history request by scrolling, witho
       next,
     ]);
     assert.equal(clicks, 0);
+    dom.reconfigure({
+      url: "https://chatik.hh.ru/chat/77?dest=iframe&dest=other&microphone=true",
+    });
+    assert.equal(
+      await runSerialized(dom, readChatSnapshot, ["77", 2, true]),
+      null,
+    );
+    dom.reconfigure({
+      url: "https://chatik.hh.ru/chat/77?dest=other&microphone=true",
+    });
+    assert.equal(
+      await runSerialized(dom, readChatSnapshot, ["77", 2, true]),
+      null,
+    );
   } finally {
     dom.window.close();
   }
