@@ -66,14 +66,15 @@ export function CompanionOnboarding({
           можно свернуть. Сон компьютера или закрытие Chrome приостанавливают
           работу.
         </p>
-        <label className="flex min-h-11 cursor-pointer items-start gap-3">
+        <label className="companion-consent-row cursor-pointer">
           <Checkbox
+            className="companion-consent-control"
             checked={awake}
             onCheckedChange={setAwake}
             disabled={busy}
             aria-label="Компьютер и Chrome останутся включёнными"
           />
-          <span className="text-sm">
+          <span className="min-w-0 text-sm leading-6">
             Понимаю, что компьютер и Chrome должны оставаться включёнными.
           </span>
         </label>
@@ -86,20 +87,23 @@ export function CompanionOnboarding({
           Возраст и документы
         </h3>
         <div>
-          <div className="flex min-h-11 items-center gap-4">
+          <div className="flex min-h-11 items-center gap-3">
             <Switch
               id="companion-adult"
               checked={adult}
               onCheckedChange={setAdult}
               disabled={busy}
-              labeled
-              labelChecked="Да"
-              labelUnchecked="Нет"
               density="touch"
               presentation="unified"
+              className="m-0"
               aria-describedby="companion-adult-help"
             />
-            <label htmlFor="companion-adult">Мне есть 18</label>
+            <label
+              htmlFor="companion-adult"
+              className="min-w-0 text-sm leading-6"
+            >
+              Мне есть 18
+            </label>
           </div>
           <p
             id="companion-adult-help"
@@ -109,15 +113,16 @@ export function CompanionOnboarding({
             ответственность.
           </p>
         </div>
-        <div className="flex min-h-11 items-start gap-3">
+        <div className="companion-consent-row">
           <Checkbox
+            className="companion-consent-control"
             id="companion-terms"
             checked={terms}
             onCheckedChange={setTerms}
             disabled={busy || !termsReady}
             aria-label="Принимаю пользовательское соглашение"
           />
-          <span className="text-sm">
+          <span className="min-w-0 text-sm leading-6">
             <label htmlFor="companion-terms">Принимаю </label>
             {termsReady ? (
               <button
@@ -132,15 +137,16 @@ export function CompanionOnboarding({
             )}
           </span>
         </div>
-        <div className="flex min-h-11 items-start gap-3">
+        <div className="companion-consent-row">
           <Checkbox
+            className="companion-consent-control"
             id="companion-privacy"
             checked={privacy}
             onCheckedChange={setPrivacy}
             disabled={busy || !privacyReady}
             aria-label="Соглашаюсь с политикой конфиденциальности"
           />
-          <span className="text-sm">
+          <span className="min-w-0 text-sm leading-6">
             <label htmlFor="companion-privacy">Соглашаюсь с </label>
             {privacyReady ? (
               <button

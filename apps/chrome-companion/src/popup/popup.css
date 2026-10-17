@@ -1,8 +1,10 @@
 @import "tailwindcss" source(none);
 @import "@qrko/uikit/theme.css";
 @source "../../../ui-layer/src/pages/companion-popup/**/*.{ts,tsx}";
-@source "../../../ui-layer/src/shared/ui/**/*.{ts,tsx}";
-@source "../../../../vendor/qrko-uikit/src/**/*.{ts,tsx}";
+@source "../../../ui-layer/src/shared/ui/{button,input,textarea,checkbox,confirm-dialog}.tsx";
+@source "../../../../node_modules/@qrko/uikit/src/form/fieldSurface.ts";
+@source "../../../../node_modules/@qrko/uikit/src/layout/{Surface,UiPresentation}.tsx";
+@source "../../../../node_modules/@qrko/uikit/src/shadcn/{alert-dialog,button,checkbox,input,switch,tabs,textarea}.tsx";
 
 @font-face {
   font-family: "PT Sans";
@@ -188,22 +190,19 @@ body {
   outline-offset: 3px;
   border-radius: var(--radius-sm);
 }
-.companion-onboarding [data-slot="switch-track"] {
-  width: 5.5rem;
-  height: 2.75rem;
-  border-radius: var(--radius-xl);
-  padding: 0.25rem;
+.companion-consent-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  min-height: var(--control-height-touch);
 }
-.companion-onboarding [role="switch"] {
-  width: 5.5rem;
-}
-.companion-onboarding [data-slot="switch-track"] > span {
-  width: 3rem;
-  height: 2rem;
-  font-size: 1rem;
-}
-.companion-onboarding [data-slot="switch-track"] > span[data-state="checked"] {
-  transform: translateX(2rem);
+/* Keep the 44px hit target, while aligning the visible 16px checkbox with
+   the first text line. Its hit target stops where the label column begins. */
+.companion-consent-row .companion-consent-control {
+  width: var(--control-height-touch);
+  height: var(--control-height-touch);
+  margin: -10px calc((20px - var(--control-height-touch)) / 2) 0;
 }
 @media (prefers-reduced-motion: reduce) {
   .companion-popup *,
