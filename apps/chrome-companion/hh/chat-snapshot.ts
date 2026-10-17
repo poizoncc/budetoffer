@@ -6,6 +6,7 @@ export async function readChatSnapshot(
   chatId: string,
   expectedMessages: number | null = null,
   embedded = false,
+  expectedApplicantId: string | null = null,
 ): Promise<string | null> {
   const url = new URL(globalThis.location.href);
   // HH can initialize its Chatik root iframe through its integration bridge.
@@ -111,6 +112,8 @@ export async function readChatSnapshot(
                 if (
                   ![
                     "chatId",
+                    "applicantId",
+                    "do_not_track_session_events",
                     "fromMessageId",
                     "toMessageId",
                     "beforeMessageId",
@@ -144,6 +147,30 @@ export async function readChatSnapshot(
                 ) {
                   return null;
                 }
+                if (
+                  key === "applicantId" &&
+                  (!expectedApplicantId || parameter !== expectedApplicantId)
+                ) {
+                  return null;
+                }
+                if (
+                  key === "do_not_track_session_events" &&
+                  !["true", "false", "0", "1"].includes(parameter)
+                ) {
+                  return null;
+                }
+              }
+              if (
+                ![...next.searchParams.keys()].some(
+                  (key) =>
+                    ![
+                      "chatId",
+                      "applicantId",
+                      "do_not_track_session_events",
+                    ].includes(key),
+                )
+              ) {
+                return null;
               }
               return visited.has(next.href) ? null : next.href;
             } catch {
@@ -174,6 +201,21 @@ export async function readChatSnapshot(
             // The document URL was validated above and every observed request
             // still has to match the exact owned chat and read-only endpoint.
             let scroller: HTMLElement | null = null;
+            const normalize = (text: string) =>
+              text
+                .replace(/<[^>]*>/gu, " ")
+                .replace(/\s+/gu, " ")
+                .trim();
+            const knownTexts = [
+              ...new Set(
+                (Array.isArray(messages.items) ? messages.items : [])
+                  .map((item) => record(item).text)
+                  .filter((text): text is string => typeof text === "string")
+                  .map(normalize)
+                  .filter((text) => text.length >= 4)
+                  .map((text) => text.slice(0, 1000)),
+              ),
+            ];
             for (
               let renderAttempt = 0;
               renderAttempt < 12 && !scroller;
@@ -181,9 +223,10 @@ export async function readChatSnapshot(
             ) {
               const candidates = [
                 ...document.querySelectorAll(
-                  '[data-qa*="message"],[class*="message"]',
+                  '[data-qa*="message" i],[class*="message" i],[data-message-id]',
                 ),
               ];
+              const containers = new Set<HTMLElement>();
               for (const candidate of candidates) {
                 let parent = candidate.parentElement;
                 while (parent) {
@@ -192,12 +235,50 @@ export async function readChatSnapshot(
                     parent.scrollHeight > parent.clientHeight + 10 &&
                     /auto|scroll/u.test(style.overflowY)
                   ) {
-                    scroller = parent;
+                    containers.add(parent);
                     break;
                   }
                   parent = parent.parentElement;
                 }
-                if (scroller) break;
+              }
+              // The left conversation list also has message previews. Require
+              // the history pane to contain known text from this pinned API
+              // conversation; never pick the first generic "message" element.
+              const ranked = [...containers]
+                .map((element) => {
+                  const content = normalize(element.textContent ?? "");
+                  return {
+                    element,
+                    score: knownTexts.filter((text) => content.includes(text))
+                      .length,
+                  };
+                })
+                .filter(
+                  (item) =>
+                    item.score >= Math.min(2, knownTexts.length) &&
+                    item.score > 0,
+                )
+                .sort((a, b) => {
+                  if (a.score !== b.score) {
+                    return b.score - a.score;
+                  }
+                  if (a.element.contains(b.element)) {
+                    return 1;
+                  }
+                  if (b.element.contains(a.element)) {
+                    return -1;
+                  }
+                  return 0;
+                });
+              const first = ranked[0];
+              const second = ranked[1];
+              if (
+                first &&
+                (!second ||
+                  first.score > second.score ||
+                  second.element.contains(first.element))
+              ) {
+                scroller = first.element;
               }
               if (!scroller) {
                 await new Promise<void>((resolve) => setTimeout(resolve, 250));
@@ -208,8 +289,14 @@ export async function readChatSnapshot(
               return null;
             }
             scrollerFound = true;
-            scroller.scrollTop = 1;
-            scroller.scrollTop = 0;
+            const reverse =
+              getComputedStyle(scroller).flexDirection === "column-reverse";
+            const oldest = reverse
+              ? -(scroller.scrollHeight - scroller.clientHeight)
+              : 0;
+            scroller.scrollTop = oldest + (reverse ? -1 : 1);
+            scroller.scrollTop = oldest;
+            scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
             for (let attempt = 0; attempt < 12; attempt++) {
               const entries = performance.getEntriesByType("resource");
               for (let index = entries.length - 1; index >= 0; index--) {
@@ -501,7 +588,7 @@ export async function readChatSnapshot(
           for (const itemsLimit of [200, 100, 80, 40, 20, 10, 5, 1]) {
             truncated = false;
             const content = escape(JSON.stringify(project(value, itemsLimit)));
-            const captured = `<section data-captured-chat-id="${chatId}" data-reader-version="0.2.28" data-read-host="${url.hostname}" data-expected-message-count="${expectedMessages ?? ""}" data-read-truncated="${truncated}" data-api-pages="${apiPages}" data-api-has-more="${messages.hasMore === true}" data-read-format="hh-chat-api-v1"><pre data-qa="chat-api-data">${content}</pre></section>`;
+            const captured = `<section data-captured-chat-id="${chatId}" data-reader-version="0.2.29" data-read-host="${url.hostname}" data-expected-message-count="${expectedMessages ?? ""}" data-read-truncated="${truncated}" data-api-pages="${apiPages}" data-api-has-more="${messages.hasMore === true}" data-read-format="hh-chat-api-v1"><pre data-qa="chat-api-data">${content}</pre></section>`;
             if (captured.length <= 60000) return captured;
           }
           apiFailure = "response_limit";
@@ -612,7 +699,7 @@ export async function readChatSnapshot(
   return diagnostic();
   function diagnostic(): string {
     const diagnostics = {
-      reader: "0.2.28",
+      reader: "0.2.29",
       host: url.hostname,
       apiStatus,
       apiFailure,

@@ -782,7 +782,7 @@ test("chat diagnostics stay bounded even on a large unsupported document and unr
     assert.ok(diagnostic);
     assert.ok(diagnostic.length < 20000);
     assert.match(diagnostic, /hh-chat-diagnostic-v1/);
-    assert.match(diagnostic, /0.2.28/);
+    assert.match(diagnostic, /0.2.29/);
     assert.doesNotMatch(diagnostic, /private_body/);
     dom.reconfigure({ url: "https://chatik.hh.ru/chat/78?without_list=1" });
     assert.equal(
@@ -966,14 +966,24 @@ test("chat pagination discovers the observed history request by scrolling, witho
     "https://kaliningrad.hh.ru/chat/77",
     "https://chatik.hh.ru/?dest=iframe&microphone=true",
   ]) {
+    const reverse = url.includes("kaliningrad");
     const dom = new JSDOM(
-      '<div id="history" style="overflow-y:auto"><div data-qa="message">Latest</div><button>Send</button></div>',
+      '<div id="conversations" style="overflow-y:auto"><div data-qa="message-preview">Latest</div></div>' +
+        `<div id="history" style="overflow-y:auto;flex-direction:${reverse ? "column-reverse" : "column"}"><div class="Message">Latest</div><div class="Message">Followup</div><button>Send</button></div>`,
       {
         url,
         runScripts: "outside-only",
       },
     );
     const scroller = dom.window.document.getElementById("history")!;
+    const conversations = dom.window.document.getElementById("conversations")!;
+    Object.defineProperty(conversations, "scrollHeight", { value: 500 });
+    Object.defineProperty(conversations, "clientHeight", { value: 100 });
+    let unrelatedScrolls = 0;
+    Object.defineProperty(conversations, "scrollTop", {
+      get: () => 100,
+      set: () => unrelatedScrolls++,
+    });
     Object.defineProperty(scroller, "scrollHeight", { value: 500 });
     Object.defineProperty(scroller, "clientHeight", { value: 100 });
     let top = 100;
@@ -983,14 +993,14 @@ test("chat pagination discovers the observed history request by scrolling, witho
       get: () => top,
       set: (value: number) => {
         top = value;
-        if (value === 0) scrolled = true;
+        if (value === (reverse ? -400 : 0)) scrolled = true;
       },
     });
     dom.window.document
       .querySelector("button")!
       .addEventListener("click", () => clicks++);
     const next =
-      "https://chatik.hh.ru/chatik/api/messages?chatId=77&beforeMessageId=2";
+      "https://chatik.hh.ru/chatik/api/messages?chatId=77&beforeMessageId=2&applicantId=10&do_not_track_session_events=true";
     Object.defineProperty(dom.window.performance, "getEntriesByType", {
       value: () =>
         scrolled
@@ -1000,6 +1010,14 @@ test("chat pagination discovers the observed history request by scrolling, witho
                 initiatorType: "img",
               },
               { name: next, initiatorType: "fetch" },
+              {
+                name: next.replace("applicantId=10", "applicantId=11"),
+                initiatorType: "fetch",
+              },
+              {
+                name: "https://chatik.hh.ru/chatik/api/chat_data?chatId=77&applicantId=10&do_not_track_session_events=true",
+                initiatorType: "fetch",
+              },
             ]
           : [],
     });
@@ -1018,7 +1036,10 @@ test("chat pagination discovers the observed history request by scrolling, witho
                 chat: {
                   id: 77,
                   messages: {
-                    items: [{ id: 2, chatId: 77, text: "Latest" }],
+                    items: [
+                      { id: 2, chatId: 77, text: "Latest" },
+                      { id: 3, chatId: 77, text: "Followup" },
+                    ],
                     hasMore: true,
                   },
                 },
@@ -1031,8 +1052,9 @@ test("chat pagination discovers the observed history request by scrolling, witho
     try {
       const snapshot = await runSerialized(dom, readChatSnapshot, [
         "77",
-        2,
+        3,
         true,
+        "10",
       ]);
       assert.ok(snapshot);
       assert.match(snapshot, /Older/);
@@ -1042,6 +1064,7 @@ test("chat pagination discovers the observed history request by scrolling, witho
         next,
       ]);
       assert.equal(clicks, 0);
+      assert.equal(unrelatedScrolls, 0);
       dom.reconfigure({
         url: "https://chatik.hh.ru/chat/77?dest=iframe&dest=other&microphone=true",
       });

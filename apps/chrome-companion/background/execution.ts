@@ -877,7 +877,14 @@ export function createChromeExecution(
                     target: { tabId: chatTab, allFrames: true },
                     world: "ISOLATED",
                     func: readChatSnapshot,
-                    args: [ref.chatId!, ref.expectedMessages, true],
+                    args: [
+                      ref.chatId!,
+                      ref.expectedMessages,
+                      true,
+                      job.hhAccountKey.match(
+                        /^hh-applicant-([1-9]\d{0,30})$/u,
+                      )?.[1] ?? null,
+                    ],
                   });
                   snapshots = results
                     .filter(
@@ -894,6 +901,10 @@ export function createChromeExecution(
                   const result = await inject(chatTab, readChatSnapshot, [
                     ref.chatId!,
                     ref.expectedMessages,
+                    false,
+                    job.hhAccountKey.match(
+                      /^hh-applicant-([1-9]\d{0,30})$/u,
+                    )?.[1] ?? null,
                   ]);
                   if (result.value) snapshots.push(result.value);
                 }
