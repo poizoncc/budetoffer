@@ -2183,6 +2183,209 @@ test("owned navigation waits through the previous completed HH document", async 
     chrome.close();
   }
 });
+test("search settles explicit same-resource pending navigation before identity or the next detail", async () => {
+  for (const pendingAt of [2, 6]) {
+    const chrome = browser(
+      (url) =>
+        new URL(url).pathname === "/search/vacancy"
+          ? html({
+              vacancySearchResult: {
+                vacancies: [123, 124].map((vacancyId) => ({
+                  vacancyId,
+                  name: "Synthetic snippet",
+                  company: { visibleName: "Synthetic" },
+                })),
+                paging: {
+                  pages: [{ page: 0, selected: true }],
+                  next: { disabled: true },
+                },
+              },
+            })
+          : pages(url),
+      (url) => url.replace("https://hh.ru", "https://kaliningrad.hh.ru"),
+    );
+    const get = chrome.api.tabs.get;
+    const inject = chrome.api.scripting.executeScript;
+    let detailChecks = 0;
+    let pendingObserved = false;
+    const detailReads: string[] = [];
+    chrome.api.tabs.get = async (id) => {
+      const tab = await get(id);
+      if (
+        id === 101 &&
+        new URL(tab.url!).pathname === "/vacancy/123" &&
+        ++detailChecks === pendingAt
+      ) {
+        pendingObserved = true;
+        return { ...tab, status: "loading", pendingUrl: tab.url };
+      }
+      return tab;
+    };
+    chrome.api.scripting.executeScript = async (script) => {
+      const url = chrome.tabs.get(script.target.tabId)!.url;
+      if (
+        script.func.name === "readPageEvidence" &&
+        new URL(url).pathname.startsWith("/vacancy/")
+      ) {
+        detailReads.push(url);
+      }
+      return inject(script);
+    };
+    try {
+      const result = await createChromeExecution(
+        chrome.api,
+        {},
+        { load: async () => null },
+      ).execute(
+        job({
+          kind: "discover_search",
+          savedSearchId: "search-one",
+          text: "synthetic",
+          maxPages: 1,
+        }),
+      );
+      assert.equal(pendingObserved, true);
+      assert.equal(result.outcome, "confirmed");
+      assert.ok(result.result?.kind === "discover_search");
+      assert.deepEqual(
+        result.result.vacancies.map((vacancy) => vacancy.vacancyId),
+        ["123", "124"],
+      );
+      assert.deepEqual(
+        detailReads.map((url) => new URL(url).pathname),
+        ["/vacancy/123", "/vacancy/124"],
+      );
+      assert.deepEqual(chrome.removed, [101]);
+    } finally {
+      chrome.close();
+    }
+  }
+});
+test("same-resource waiting never refreshes a pinned document or account proof", async () => {
+  for (const changed of ["document", "account", "response-document"]) {
+    const chrome = browser(pages);
+    const get = chrome.api.tabs.get;
+    const inject = chrome.api.scripting.executeScript;
+    let proofDocument: string | undefined;
+    let pendingChecks = 0;
+    let evidenceAttempts = 0;
+    let identityReads = 0;
+    chrome.api.tabs.get = async (id) => {
+      const tab = await get(id);
+      if (id === 101 && proofDocument && pendingChecks++ === 0) {
+        return { ...tab, status: "loading", pendingUrl: tab.url };
+      }
+      if (id === 101 && proofDocument && pendingChecks === 2) {
+        const current = chrome.tabs.get(id)!;
+        if (changed === "document") current.documentId = "replacement-document";
+        if (changed === "account") {
+          current.dom.window.document.querySelector("template")!.innerHTML =
+            JSON.stringify(account("202"));
+        }
+      }
+      return tab;
+    };
+    chrome.api.scripting.executeScript = async (script) => {
+      if (script.target.tabId !== 101) return inject(script);
+      if (script.func.name === "readPageEvidence") {
+        evidenceAttempts++;
+        assert.deepEqual(script.target.documentIds, [proofDocument]);
+      }
+      const response = await inject(script);
+      if (script.func.name === "readVerifiedAccountIdentity") {
+        identityReads++;
+        if (!proofDocument) proofDocument = response[0]!.documentId;
+      }
+      return changed === "response-document" &&
+        script.func.name === "readPageEvidence"
+        ? response.map((value) => ({ ...value, documentId: "wrong-document" }))
+        : response;
+    };
+    try {
+      const result = await createChromeExecution(
+        chrome.api,
+        {},
+        { load: async () => null },
+      ).execute(
+        job({
+          kind: "verify_vacancy",
+          applicationId: "app-one",
+          vacancyId: "123",
+          expectedVersion: 1,
+        }),
+      );
+      assert.ok(pendingChecks >= 2);
+      assert.equal(evidenceAttempts, 1);
+      assert.equal(identityReads, changed === "account" ? 2 : 1);
+      assert.equal(result.outcome, "needs_user");
+      assert.equal(result.result, undefined);
+      assert.equal(
+        result.evidence.reasonCode,
+        changed === "account" ? "account_changed" : "hh_read_failed",
+      );
+    } finally {
+      chrome.close();
+    }
+  }
+});
+test("settling before injection or navigation stops at the page or job deadline", async (t) => {
+  const now = Date.now();
+  let clock = now;
+  t.mock.method(Date, "now", () => clock);
+  for (const pendingAt of [2, 6]) {
+    for (const elapsed of [20_001, 120_001]) {
+      clock = now;
+      const chrome = browser(pages);
+      const get = chrome.api.tabs.get;
+      const inject = chrome.api.scripting.executeScript;
+      let ownedChecks = 0;
+      let evidenceReads = 0;
+      chrome.api.tabs.get = async (id) => {
+        const tab = await get(id);
+        if (id === 101 && ++ownedChecks === pendingAt) {
+          return { ...tab, status: "loading", pendingUrl: tab.url };
+        }
+        if (id === 101 && ownedChecks > pendingAt) clock = now + elapsed;
+        return tab;
+      };
+      chrome.api.scripting.executeScript = async (script) => {
+        if (
+          script.target.tabId === 101 &&
+          script.func.name === "readPageEvidence"
+        ) {
+          evidenceReads++;
+        }
+        return inject(script);
+      };
+      try {
+        const result = await createChromeExecution(
+          chrome.api,
+          {},
+          { load: async () => null },
+        ).execute(
+          job(
+            {
+              kind: "read_profile",
+              includeResumeIds: ["resume-one", "resume-two"],
+              includeProfileText: false,
+            },
+            { expiresAt: new Date(now + 120_000).toISOString() },
+          ),
+        );
+        assert.equal(result.outcome, "needs_user");
+        assert.equal(
+          result.evidence.reasonCode,
+          elapsed < 120_000 ? "hh_page_timeout" : "lease_expired",
+        );
+        assert.equal(result.result, undefined);
+        assert.equal(evidenceReads, pendingAt === 2 ? 0 : 1);
+        assert.deepEqual(chrome.navigated, []);
+      } finally {
+        chrome.close();
+      }
+    }
+  }
+});
 test("resume artifact import waits for its regional HH document and reads pinned owned fields", async () => {
   const chrome = browser(
     (url) =>
@@ -2411,6 +2614,7 @@ test("a pending user navigation after reading cannot confirm or close the owned 
 test("a pending user navigation is not overwritten when the next resource is requested", async () => {
   for (const observation of [
     { pendingUrl: "https://example.invalid/user-page" },
+    { pendingUrl: "https://hh.ru/resume/resume-two" },
     { status: "loading", pendingUrl: undefined },
   ]) {
     const chrome = browser(pages);

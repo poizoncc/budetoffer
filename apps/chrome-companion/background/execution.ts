@@ -76,13 +76,50 @@ export function createChromeExecution(
   checkpoints: Pick<CheckpointStore, "load"> | null,
 ) {
   let running = false;
+  const ownedTargets = new Map<number, { url: string; job?: CompanionJob }>();
+  async function settledOwnedTab(
+    tabId: number,
+    expectedUrl: string,
+    job?: CompanionJob,
+  ) {
+    const deadline = Math.min(
+      Date.now() + 20000,
+      job ? Date.parse(job.expiresAt) : Infinity,
+    );
+    while (Date.now() < deadline) {
+      if (job && Date.parse(job.expiresAt) <= Date.now()) {
+        throw new Error("lease_expired");
+      }
+      const tab = requireRunnableTab(await chromeApi.tabs.get(tabId));
+      if (Date.now() >= deadline) break;
+      if (committedReadTarget(tab, expectedUrl)) return tab;
+      // After initial loading, only a visible reload of our exact current
+      // resource may settle. A different or hidden destination loses ownership.
+      if (
+        !sameReadTarget(tab.url, expectedUrl) ||
+        !hasPendingNavigation(tab) ||
+        !sameReadTarget(tab.pendingUrl, expectedUrl)
+      ) {
+        throw new Error("unexpected_hh_navigation");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(
+      job && Date.parse(job.expiresAt) <= Date.now()
+        ? "lease_expired"
+        : "hh_page_timeout",
+    );
+  }
   async function inject<Args extends unknown[], Result>(
     tabId: number,
     func: (...args: Args) => Result,
     args: Args,
     documentId?: string,
   ) {
-    const tab = requireRunnableTab(await chromeApi.tabs.get(tabId));
+    const owned = ownedTargets.get(tabId);
+    const tab = owned
+      ? await settledOwnedTab(tabId, owned.url, owned.job)
+      : requireRunnableTab(await chromeApi.tabs.get(tabId));
     if (tab.status !== "complete" || hasPendingNavigation(tab)) {
       throw new Error("unexpected_hh_navigation");
     }
@@ -115,6 +152,7 @@ export function createChromeExecution(
       !Array.isArray(response) ||
       response.length !== 1 ||
       response[0]?.frameId !== 0 ||
+      (documentId !== undefined && response[0].documentId !== documentId) ||
       ("error" in response[0] && response[0].error) ||
       response[0].result === undefined
     ) {
@@ -212,6 +250,7 @@ export function createChromeExecution(
       tabId: number,
       navigate: (url: string) => Promise<void>,
     ) => Promise<Result>,
+    job?: CompanionJob,
   ): Promise<Result> {
     const tab = await chromeApi.tabs.create({ url: initialUrl, active: false });
     if (typeof tab.id !== "number" || !Number.isInteger(tab.id)) {
@@ -219,20 +258,20 @@ export function createChromeExecution(
     }
     const tabId = tab.id;
     let expected = initialUrl;
+    ownedTargets.set(tabId, { url: expected, job });
     try {
       // Owned background tabs remain inactive, but should not be evicted by
       // memory saver midway through a bounded job. User tabs remain untouched.
       await chromeApi.tabs.update?.(tabId, { autoDiscardable: false });
       return await run(tabId, async (url: string) => {
-        const current = requireRunnableTab(await chromeApi.tabs.get(tabId));
         // A user-navigated tab is no longer ours to steer or close.
-        if (!committedReadTarget(current, expected)) {
-          throw new Error("unexpected_hh_navigation");
-        }
+        await settledOwnedTab(tabId, expected, job);
         expected = url;
+        ownedTargets.set(tabId, { url: expected, job });
         await chromeApi.tabs.update(tabId, { url });
       });
     } finally {
+      ownedTargets.delete(tabId);
       const current = await chromeApi.tabs.get(tabId).catch(() => null);
       if (current && committedReadTarget(current, expected)) {
         await chromeApi.tabs.remove(tabId).catch(() => {});
@@ -488,555 +527,613 @@ export function createChromeExecution(
       default:
         initialUrl = `${HH}/resume/${p.resumeId}`;
     }
-    return withOwnedTab(initialUrl, async (tabId, navigate) => {
-      let currentUrl = initialUrl;
-      const freshSessionIdentity = () =>
-        withOwnedTab(HH + "/", async (identityTab) => {
-          await loaded(identityTab, HH + "/", job);
-          return (await inject(identityTab, readVerifiedAccountIdentity, []))
-            .value;
-        });
-      async function read<Result>(
-        url: string,
-        operation: string | undefined,
-        run: (
-          documentId?: string,
-          sessionVerifiedEmpty?: boolean,
-        ) => Promise<Result>,
-      ): Promise<Result> {
-        if (Date.parse(job.expiresAt) <= Date.now()) {
-          throw new Error("lease_expired");
-        }
-        let previousUrl: string | undefined;
-        if (url !== currentUrl) {
-          previousUrl = currentUrl;
-          await navigate(url);
-          currentUrl = url;
-        }
-        await loaded(tabId, url, job, previousUrl);
-        let sessionVerifiedEmpty = false;
-        let before = await inject(tabId, readVerifiedAccountIdentity, []);
-        if (!before.value && operation === "history") {
-          const history = await historyIdentity(
-            tabId,
-            before.documentId,
-            p.kind === "read_hh_history" || p.kind === "read_hh_correspondence",
+    return withOwnedTab(
+      initialUrl,
+      async (tabId, navigate) => {
+        let currentUrl = initialUrl;
+        const freshSessionIdentity = () =>
+          withOwnedTab(
+            HH + "/",
+            async (identityTab) => {
+              await loaded(identityTab, HH + "/", job);
+              return (
+                await inject(identityTab, readVerifiedAccountIdentity, [])
+              ).value;
+            },
+            job,
           );
-          sessionVerifiedEmpty = history.empty;
-          before = {
-            value: history.empty ? await freshSessionIdentity() : history.value,
-            documentId: history.documentId,
-          };
-        }
-        if (!accountMatches(job.hhAccountKey, before.value)) {
-          throw new Error("account_identity_unverified");
-        }
-        const result = await run(before.documentId, sessionVerifiedEmpty);
-        let after = await inject(
-          tabId,
-          readVerifiedAccountIdentity,
-          [],
-          before.documentId,
-        );
-        if (sessionVerifiedEmpty) {
-          const empty = await historyIdentity(tabId, before.documentId, true);
-          if (!empty.empty) throw new Error("incomplete_history_page");
-          const currentAccount = await freshSessionIdentity();
-          const unchanged = await historyIdentity(
-            tabId,
-            before.documentId,
-            true,
-          );
-          if (!unchanged.empty) throw new Error("incomplete_history_page");
-          after = { value: currentAccount, documentId: unchanged.documentId };
-        } else if (!after.value && operation === "history") {
-          after = await historyIdentity(tabId, before.documentId);
-        }
-        if (!accountMatches(job.hhAccountKey, after.value)) {
-          throw new Error("account_changed");
-        }
-        if (
-          !committedReadTarget(
-            requireRunnableTab(await chromeApi.tabs.get(tabId)),
-            url,
-          )
-        ) {
-          throw new Error("unexpected_hh_navigation");
-        }
-        if (Date.parse(job.expiresAt) <= Date.now()) {
-          throw new Error("lease_expired");
-        }
-        return result;
-      }
-      const pageRead = (url: string, request: PageEvidenceRequest) =>
-        read(
-          url,
-          request.operation,
-          async (documentId) =>
-            (await inject(tabId, readPageEvidence, [request], documentId))
-              .value,
-        );
-      async function resumeRead(url: string, resumeId: string) {
-        const result = await pageRead(url, { operation: "resume", resumeId });
-        if (!("internalId" in result)) {
-          throw new Error("resume_identity_mismatch");
-        }
-        return result;
-      }
-      async function vacancyRead(url: string, vacancyId: string) {
-        const result = await pageRead(url, { operation: "vacancy", vacancyId });
-        if (!("text" in result)) throw new Error("vacancy_text_unavailable");
-        return result;
-      }
-      async function historyRead(
-        url: string,
-        filter: HistoryFilter,
-        page: number,
-      ) {
-        const result = await pageRead(url, {
-          operation: "history",
-          filter,
-          page,
-        });
-        if (!("observations" in result)) {
-          throw new Error("unsupported_history_page");
-        }
-        return result;
-      }
-      if (p.kind === "verify_vacancy") {
-        return {
-          kind: p.kind,
-          ...(await vacancyRead(initialUrl, p.vacancyId)),
-        };
-      }
-      if (p.kind === "read_resume_artifact") {
-        return {
-          kind: p.kind,
-          artifact: await read(
-            initialUrl,
-            undefined,
-            async (documentId) =>
-              (
-                await inject(
-                  tabId,
-                  readPublicationResumeArtifacts,
-                  [
-                    {
-                      resumeId: p.resumeId,
-                      internalId: p.internalId,
-                      hhAccountKey: job.hhAccountKey,
-                    },
-                  ],
-                  documentId,
-                )
-              ).value,
-          ),
-        };
-      }
-      if (p.kind === "discover_search") {
-        // Resume recommendations are private to their editable owner. Establish
-        // fresh ownership before searching, including every continuation job.
-        if (resumeSearchId) await resumeRead(initialUrl, resumeSearchId);
-        const vacancies: SearchVacancy[] = [];
-        const seen = new Set<string>();
-        let pages = 0;
-        let complete = false;
-        let length = 0;
-        let stop = false;
-        let nextCursor: { page: number; offset: number } | null = null;
-        const start = p.cursor ?? { page: 0, offset: 0 };
-        for (let page = start.page; page < p.maxPages; page++) {
-          const url = searchUrl(page);
-          const data = await pageRead(url, {
-            operation: "search",
-            page,
-            expectedUrl: url,
-          });
-          if (!("vacancies" in data)) throw new Error("unsupported_hh_page");
-          pages++;
-          const offset = page === start.page ? start.offset : 0;
-          if (offset > data.vacancies.length) {
-            throw new Error("unsupported_hh_page");
+        async function read<Result>(
+          url: string,
+          operation: string | undefined,
+          run: (
+            documentId?: string,
+            sessionVerifiedEmpty?: boolean,
+          ) => Promise<Result>,
+        ): Promise<Result> {
+          if (Date.parse(job.expiresAt) <= Date.now()) {
+            throw new Error("lease_expired");
           }
-          const remaining = data.vacancies.slice(offset);
-          const candidateIds = remaining
-            .filter(
-              (row) => vacancyId(row.vacancyId) && !seen.has(row.vacancyId),
+          let previousUrl: string | undefined;
+          if (url !== currentUrl) {
+            previousUrl = currentUrl;
+            await navigate(url);
+            currentUrl = url;
+          }
+          await loaded(tabId, url, job, previousUrl);
+          let sessionVerifiedEmpty = false;
+          let before = await inject(tabId, readVerifiedAccountIdentity, []);
+          if (!before.value && operation === "history") {
+            const history = await historyIdentity(
+              tabId,
+              before.documentId,
+              p.kind === "read_hh_history" ||
+                p.kind === "read_hh_correspondence",
+            );
+            sessionVerifiedEmpty = history.empty;
+            before = {
+              value: history.empty
+                ? await freshSessionIdentity()
+                : history.value,
+              documentId: history.documentId,
+            };
+          }
+          if (!accountMatches(job.hhAccountKey, before.value)) {
+            throw new Error("account_identity_unverified");
+          }
+          const result = await run(before.documentId, sessionVerifiedEmpty);
+          let after = await inject(
+            tabId,
+            readVerifiedAccountIdentity,
+            [],
+            before.documentId,
+          );
+          if (sessionVerifiedEmpty) {
+            const empty = await historyIdentity(tabId, before.documentId, true);
+            if (!empty.empty) throw new Error("incomplete_history_page");
+            const currentAccount = await freshSessionIdentity();
+            const unchanged = await historyIdentity(
+              tabId,
+              before.documentId,
+              true,
+            );
+            if (!unchanged.empty) throw new Error("incomplete_history_page");
+            after = { value: currentAccount, documentId: unchanged.documentId };
+          } else if (!after.value && operation === "history") {
+            after = await historyIdentity(tabId, before.documentId);
+          }
+          if (!accountMatches(job.hhAccountKey, after.value)) {
+            throw new Error("account_changed");
+          }
+          if (
+            !committedReadTarget(
+              requireRunnableTab(await chromeApi.tabs.get(tabId)),
+              url,
             )
-            .slice(0, 20)
-            .map((row) => row.vacancyId);
-          let shared: SearchVacancy[] = [];
-          if (transport?.publicDetails && candidateIds.length) {
-            try {
-              const result = await transport.publicDetails(job, [
-                ...new Set(candidateIds),
-              ]);
-              if (
-                isRecord(result) &&
-                Array.isArray(result.vacancies) &&
-                result.vacancies.length <= 20
-              ) {
-                shared = result.vacancies.filter(
-                  (row: unknown): row is SearchVacancy =>
-                    isRecord(row) &&
-                    typeof row.vacancyId === "string" &&
-                    candidateIds.includes(row.vacancyId) &&
-                    typeof row.title === "string" &&
-                    !!row.title.trim() &&
-                    row.title.length <= 1000 &&
-                    (row.company === null ||
-                      (typeof row.company === "string" &&
-                        row.company.length <= 1000)) &&
-                    typeof row.text === "string" &&
-                    !!row.text.trim() &&
-                    row.text.length <= 250000,
-                );
-              }
-            } catch {
-              /* Older server or unavailable cache: own bounded detail read. */
-            }
+          ) {
+            throw new Error("unexpected_hh_navigation");
           }
-          for (const [index, row] of remaining.entries()) {
-            if (seen.has(row.vacancyId)) continue;
-            if (
-              vacancies.length >= 20 ||
-              Date.parse(job.expiresAt) - Date.now() < 25000
-            ) {
-              stop = true;
-              nextCursor = { page, offset: offset + index };
-              break;
-            }
-            const cached = shared.find(
-              (value) => value.vacancyId === row.vacancyId,
-            );
-            const detail =
-              cached ??
-              (await vacancyRead(
-                `${HH}/vacancy/${row.vacancyId}`,
-                row.vacancyId,
-              ));
-            if (length + detail.text.length > 400000) {
-              stop = true;
-              nextCursor = { page, offset: offset + index };
-              break;
-            }
-            vacancies.push({
-              ...detail,
-              company: cached ? cached.company : row.company,
-            });
-            seen.add(row.vacancyId);
-            length += detail.text.length;
+          if (Date.parse(job.expiresAt) <= Date.now()) {
+            throw new Error("lease_expired");
           }
-          if (stop) break;
-          if (!data.hasNext) {
-            complete = true;
-            break;
-          }
-          if (vacancies.length >= 20) {
-            nextCursor =
-              page + 1 < p.maxPages ? { page: page + 1, offset: 0 } : null;
-            break;
-          }
+          return result;
         }
-        return {
-          kind: p.kind,
-          savedSearchId: p.savedSearchId,
-          pages,
-          complete,
-          vacancies,
-          nextCursor,
-        };
-      }
-      if (p.kind === "read_profile") {
-        const resumes: ResumeEvidence[] = [];
-        for (const resumeId of new Set(p.includeResumeIds)) {
-          resumes.push(await resumeRead(`${HH}/resume/${resumeId}`, resumeId));
-        }
-        if (!resumes.length) await read(HH + "/", undefined, async () => null);
-        return { kind: p.kind, resumes };
-      }
-      if (p.kind === "read_hh_history" || p.kind === "read_hh_correspondence") {
-        const observations = new Map<string, FullHistoryObservation>();
-        const chatReferences = new Map<
-          string,
-          {
-            negotiationId: string;
-            vacancyId: string;
-            resumeInternalId: string;
-            chatId: string | null;
-            expectedMessages: number | null;
-          }
-        >();
-        let pages = 0;
-        const observedAt = new Date().toISOString();
-        const result = (complete: boolean): JobResult => ({
-          kind: "read_hh_history",
-          readerVersion: "hh-full-history-v1",
-          observedAt: new Date().toISOString(),
-          pages,
-          complete,
-          observations: [...observations.values()],
-        });
-        for (const filter of ["active", "archived", "deleted"] as const) {
-          let expectedPages: number | undefined;
-          for (let page = 0; ; page++) {
-            if (
-              pages >=
-              (p.kind === "read_hh_history" ? p.maxPages : MAX_HISTORY_PAGES)
-            ) {
-              if (p.kind === "read_hh_correspondence") {
-                throw new Error("incomplete_history_page");
-              }
-              return result(false);
-            }
-            const data = await read(
-              `${HH}/applicant/negotiations?filter=${filter}&page=${page}`,
-              "history",
-              async (documentId, sessionVerifiedEmpty) =>
-                (
-                  await inject(
-                    tabId,
-                    readFullHistoryPage,
-                    [
-                      {
-                        filter,
-                        page,
-                        hhAccountKey: job.hhAccountKey,
-                        observedAt,
-                        sessionVerifiedEmpty,
-                        includeChatReferences:
-                          p.kind === "read_hh_correspondence",
-                      },
-                    ],
-                    documentId,
-                  )
-                ).value,
-            );
-            pages++;
-            for (const ref of data.chatReferences ?? []) {
-              chatReferences.set(ref.negotiationId, ref);
-            }
-            expectedPages ??= Math.max(1, data.pageCount);
-            if (expectedPages !== Math.max(1, data.pageCount)) {
-              throw new Error("incomplete_history_page");
-            }
-            for (const row of data.observations) {
-              if (observations.has(row.negotiationId)) {
-                throw new Error("history_ambiguous");
-              }
-              observations.set(row.negotiationId, row);
-              if (observations.size > 10000) {
-                throw new Error("incomplete_history_page");
-              }
-            }
-            if (page + 1 === expectedPages && !data.hasNext) break;
-            if (page + 1 >= expectedPages || !data.hasNext) {
-              throw new Error("incomplete_history_page");
-            }
-          }
-        }
-        if (p.kind === "read_hh_correspondence") {
-          const threads: CapturedConversation[] = [];
-          let totalSize = 0;
-          for (const target of p.targets) {
-            const ref = chatReferences.get(target.negotiationId);
-            if (!ref) {
-              threads.push({
-                ...target,
-                chatId: null,
-                snapshot: null,
-                reason: "history_not_confirmed",
-              });
-              continue;
-            }
-            if (
-              ref.vacancyId !== target.vacancyId ||
-              ref.resumeInternalId !== target.resumeInternalId
-            ) {
-              throw new Error("history_ambiguous");
-            }
-            if (!ref.chatId) {
-              threads.push({
-                ...target,
-                chatId: null,
-                snapshot: null,
-                reason: "chat_missing",
-              });
-              continue;
-            }
-            if (totalSize >= 1780000) {
-              threads.push({
-                ...target,
-                chatId: ref.chatId,
-                snapshot: null,
-                reason: "snapshot_limit",
-              });
-              continue;
-            }
-            const url = `https://hh.ru/chat/${ref.chatId}`;
-            if (
-              !accountMatches(job.hhAccountKey, await freshSessionIdentity())
-            ) {
-              throw new Error("account_changed");
-            }
-            let snapshot: string | null = null;
-            try {
-              snapshot = await withOwnedTab(url, async (chatTab) => {
-                await loaded(chatTab, url, job);
-                // HH embeds Chatik. Read only same-chat HH frames inside this
-                // owned tab; unrelated/ad frames return null without inspection.
-                let snapshots: string[] = [];
-                try {
-                  const results = await chromeApi.scripting.executeScript({
-                    target: { tabId: chatTab, allFrames: true },
-                    world: "ISOLATED",
-                    func: readChatSnapshot,
-                    args: [
-                      ref.chatId!,
-                      ref.expectedMessages,
-                      true,
-                      job.hhAccountKey.match(
-                        /^hh-applicant-([1-9]\d{0,30})$/u,
-                      )?.[1] ?? null,
-                    ],
-                  });
-                  snapshots = results
-                    .filter(
-                      (r) =>
-                        !("error" in r && r.error) &&
-                        Number.isSafeInteger(r.frameId) &&
-                        typeof r.result === "string",
-                    )
-                    .map((r) => r.result as string);
-                } catch {
-                  /* A denied embedded frame does not hide the top-frame result. */
-                }
-                if (!snapshots.length) {
-                  const result = await inject(chatTab, readChatSnapshot, [
-                    ref.chatId!,
-                    ref.expectedMessages,
-                    false,
-                    job.hhAccountKey.match(
-                      /^hh-applicant-([1-9]\d{0,30})$/u,
-                    )?.[1] ?? null,
-                  ]);
-                  if (result.value) snapshots.push(result.value);
-                }
-                if (
-                  !committedReadTarget(
-                    requireRunnableTab(await chromeApi.tabs.get(chatTab)),
-                    url,
-                  )
-                ) {
-                  throw new Error("unexpected_hh_navigation");
-                }
-                return (
-                  snapshots.find(
-                    (s) =>
-                      s.includes('data-read-format="hh-chat-api-v1"') &&
-                      s.includes('data-api-has-more="false"') &&
-                      s.includes('data-read-truncated="false"'),
-                  ) ??
-                  snapshots.find((s) =>
-                    s.includes('data-read-format="hh-chat-api-v1"'),
-                  ) ??
-                  snapshots.find((s) =>
-                    s.includes(`data-captured-chat-id="${ref.chatId}"`),
-                  ) ??
-                  snapshots[0] ??
-                  null
-                );
-              });
-            } catch (error) {
-              const reason = error instanceof Error ? error.message : "";
-              if (
-                ![
-                  "hh_read_failed",
-                  "hh_page_timeout",
-                  "unexpected_hh_navigation",
-                  "hh_tab_suspended",
-                ].includes(reason)
-              ) {
-                throw error;
-              }
-            }
-            if (
-              !accountMatches(job.hhAccountKey, await freshSessionIdentity())
-            ) {
-              throw new Error("account_changed");
-            }
-            if (Date.parse(job.expiresAt) <= Date.now()) {
-              throw new Error("lease_expired");
-            }
-            if (snapshot) totalSize += snapshot.length;
-            threads.push({
-              ...target,
-              chatId: ref.chatId,
-              snapshot,
-              reason: snapshot ? null : "chat_not_loaded",
-            });
-          }
-          return {
-            kind: "read_hh_correspondence",
-            readerVersion: "hh-chat-dom-v1",
-            observedAt: new Date().toISOString(),
-            complete: true,
-            threads,
-          };
-        }
-        return result(true);
-      }
-      if (p.kind === "read_application_outcomes") {
-        const resumes = new Map<string, string>();
-        const observations = new Map<string, OutcomeObservation>();
-        for (const target of p.targets) {
-          if (!resumes.has(target.resumeId)) {
-            resumes.set(
-              target.resumeId,
-              (
-                await resumeRead(
-                  `${HH}/resume/${target.resumeId}`,
-                  target.resumeId,
-                )
-              ).internalId,
-            );
-          }
-          if (resumes.get(target.resumeId) !== target.resumeInternalId) {
+        const pageRead = (url: string, request: PageEvidenceRequest) =>
+          read(
+            url,
+            request.operation,
+            async (documentId) =>
+              (await inject(tabId, readPageEvidence, [request], documentId))
+                .value,
+          );
+        async function resumeRead(url: string, resumeId: string) {
+          const result = await pageRead(url, { operation: "resume", resumeId });
+          if (!("internalId" in result)) {
             throw new Error("resume_identity_mismatch");
           }
+          return result;
         }
-        let pages = 0;
-        const result = (complete: boolean): JobResult => ({
-          kind: "read_application_outcomes",
-          readerVersion: "hh-application-outcomes-v1",
-          observedAt: new Date().toISOString(),
-          pages,
-          complete,
-          observations: [...observations.values()],
-        });
-        for (const filter of ["active", "archived", "deleted"] as const) {
-          let expectedPages;
-          for (let page = 0; ; page++) {
-            if (pages >= p.maxPages) return result(false);
-            const data = await read(
-              `${HH}/applicant/negotiations?filter=${filter}&page=${page}`,
-              "history",
+        async function vacancyRead(url: string, vacancyId: string) {
+          const result = await pageRead(url, {
+            operation: "vacancy",
+            vacancyId,
+          });
+          if (!("text" in result)) throw new Error("vacancy_text_unavailable");
+          return result;
+        }
+        async function historyRead(
+          url: string,
+          filter: HistoryFilter,
+          page: number,
+        ) {
+          const result = await pageRead(url, {
+            operation: "history",
+            filter,
+            page,
+          });
+          if (!("observations" in result)) {
+            throw new Error("unsupported_history_page");
+          }
+          return result;
+        }
+        if (p.kind === "verify_vacancy") {
+          return {
+            kind: p.kind,
+            ...(await vacancyRead(initialUrl, p.vacancyId)),
+          };
+        }
+        if (p.kind === "read_resume_artifact") {
+          return {
+            kind: p.kind,
+            artifact: await read(
+              initialUrl,
+              undefined,
               async (documentId) =>
                 (
                   await inject(
                     tabId,
-                    readApplicationOutcomesPage,
+                    readPublicationResumeArtifacts,
                     [
                       {
-                        filter,
-                        page,
-                        targets: p.targets,
+                        resumeId: p.resumeId,
+                        internalId: p.internalId,
                         hhAccountKey: job.hhAccountKey,
                       },
                     ],
                     documentId,
                   )
                 ).value,
+            ),
+          };
+        }
+        if (p.kind === "discover_search") {
+          // Resume recommendations are private to their editable owner. Establish
+          // fresh ownership before searching, including every continuation job.
+          if (resumeSearchId) await resumeRead(initialUrl, resumeSearchId);
+          const vacancies: SearchVacancy[] = [];
+          const seen = new Set<string>();
+          let pages = 0;
+          let complete = false;
+          let length = 0;
+          let stop = false;
+          let nextCursor: { page: number; offset: number } | null = null;
+          const start = p.cursor ?? { page: 0, offset: 0 };
+          for (let page = start.page; page < p.maxPages; page++) {
+            const url = searchUrl(page);
+            const data = await pageRead(url, {
+              operation: "search",
+              page,
+              expectedUrl: url,
+            });
+            if (!("vacancies" in data)) throw new Error("unsupported_hh_page");
+            pages++;
+            const offset = page === start.page ? start.offset : 0;
+            if (offset > data.vacancies.length) {
+              throw new Error("unsupported_hh_page");
+            }
+            const remaining = data.vacancies.slice(offset);
+            const candidateIds = remaining
+              .filter(
+                (row) => vacancyId(row.vacancyId) && !seen.has(row.vacancyId),
+              )
+              .slice(0, 20)
+              .map((row) => row.vacancyId);
+            let shared: SearchVacancy[] = [];
+            if (transport?.publicDetails && candidateIds.length) {
+              try {
+                const result = await transport.publicDetails(job, [
+                  ...new Set(candidateIds),
+                ]);
+                if (
+                  isRecord(result) &&
+                  Array.isArray(result.vacancies) &&
+                  result.vacancies.length <= 20
+                ) {
+                  shared = result.vacancies.filter(
+                    (row: unknown): row is SearchVacancy =>
+                      isRecord(row) &&
+                      typeof row.vacancyId === "string" &&
+                      candidateIds.includes(row.vacancyId) &&
+                      typeof row.title === "string" &&
+                      !!row.title.trim() &&
+                      row.title.length <= 1000 &&
+                      (row.company === null ||
+                        (typeof row.company === "string" &&
+                          row.company.length <= 1000)) &&
+                      typeof row.text === "string" &&
+                      !!row.text.trim() &&
+                      row.text.length <= 250000,
+                  );
+                }
+              } catch {
+                /* Older server or unavailable cache: own bounded detail read. */
+              }
+            }
+            for (const [index, row] of remaining.entries()) {
+              if (seen.has(row.vacancyId)) continue;
+              if (
+                vacancies.length >= 20 ||
+                Date.parse(job.expiresAt) - Date.now() < 25000
+              ) {
+                stop = true;
+                nextCursor = { page, offset: offset + index };
+                break;
+              }
+              const cached = shared.find(
+                (value) => value.vacancyId === row.vacancyId,
+              );
+              const detail =
+                cached ??
+                (await vacancyRead(
+                  `${HH}/vacancy/${row.vacancyId}`,
+                  row.vacancyId,
+                ));
+              if (length + detail.text.length > 400000) {
+                stop = true;
+                nextCursor = { page, offset: offset + index };
+                break;
+              }
+              vacancies.push({
+                ...detail,
+                company: cached ? cached.company : row.company,
+              });
+              seen.add(row.vacancyId);
+              length += detail.text.length;
+            }
+            if (stop) break;
+            if (!data.hasNext) {
+              complete = true;
+              break;
+            }
+            if (vacancies.length >= 20) {
+              nextCursor =
+                page + 1 < p.maxPages ? { page: page + 1, offset: 0 } : null;
+              break;
+            }
+          }
+          return {
+            kind: p.kind,
+            savedSearchId: p.savedSearchId,
+            pages,
+            complete,
+            vacancies,
+            nextCursor,
+          };
+        }
+        if (p.kind === "read_profile") {
+          const resumes: ResumeEvidence[] = [];
+          for (const resumeId of new Set(p.includeResumeIds)) {
+            resumes.push(
+              await resumeRead(`${HH}/resume/${resumeId}`, resumeId),
+            );
+          }
+          if (!resumes.length) {
+            await read(HH + "/", undefined, async () => null);
+          }
+          return { kind: p.kind, resumes };
+        }
+        if (
+          p.kind === "read_hh_history" ||
+          p.kind === "read_hh_correspondence"
+        ) {
+          const observations = new Map<string, FullHistoryObservation>();
+          const chatReferences = new Map<
+            string,
+            {
+              negotiationId: string;
+              vacancyId: string;
+              resumeInternalId: string;
+              chatId: string | null;
+              expectedMessages: number | null;
+            }
+          >();
+          let pages = 0;
+          const observedAt = new Date().toISOString();
+          const result = (complete: boolean): JobResult => ({
+            kind: "read_hh_history",
+            readerVersion: "hh-full-history-v1",
+            observedAt: new Date().toISOString(),
+            pages,
+            complete,
+            observations: [...observations.values()],
+          });
+          for (const filter of ["active", "archived", "deleted"] as const) {
+            let expectedPages: number | undefined;
+            for (let page = 0; ; page++) {
+              if (
+                pages >=
+                (p.kind === "read_hh_history" ? p.maxPages : MAX_HISTORY_PAGES)
+              ) {
+                if (p.kind === "read_hh_correspondence") {
+                  throw new Error("incomplete_history_page");
+                }
+                return result(false);
+              }
+              const data = await read(
+                `${HH}/applicant/negotiations?filter=${filter}&page=${page}`,
+                "history",
+                async (documentId, sessionVerifiedEmpty) =>
+                  (
+                    await inject(
+                      tabId,
+                      readFullHistoryPage,
+                      [
+                        {
+                          filter,
+                          page,
+                          hhAccountKey: job.hhAccountKey,
+                          observedAt,
+                          sessionVerifiedEmpty,
+                          includeChatReferences:
+                            p.kind === "read_hh_correspondence",
+                        },
+                      ],
+                      documentId,
+                    )
+                  ).value,
+              );
+              pages++;
+              for (const ref of data.chatReferences ?? []) {
+                chatReferences.set(ref.negotiationId, ref);
+              }
+              expectedPages ??= Math.max(1, data.pageCount);
+              if (expectedPages !== Math.max(1, data.pageCount)) {
+                throw new Error("incomplete_history_page");
+              }
+              for (const row of data.observations) {
+                if (observations.has(row.negotiationId)) {
+                  throw new Error("history_ambiguous");
+                }
+                observations.set(row.negotiationId, row);
+                if (observations.size > 10000) {
+                  throw new Error("incomplete_history_page");
+                }
+              }
+              if (page + 1 === expectedPages && !data.hasNext) break;
+              if (page + 1 >= expectedPages || !data.hasNext) {
+                throw new Error("incomplete_history_page");
+              }
+            }
+          }
+          if (p.kind === "read_hh_correspondence") {
+            const threads: CapturedConversation[] = [];
+            let totalSize = 0;
+            for (const target of p.targets) {
+              const ref = chatReferences.get(target.negotiationId);
+              if (!ref) {
+                threads.push({
+                  ...target,
+                  chatId: null,
+                  snapshot: null,
+                  reason: "history_not_confirmed",
+                });
+                continue;
+              }
+              if (
+                ref.vacancyId !== target.vacancyId ||
+                ref.resumeInternalId !== target.resumeInternalId
+              ) {
+                throw new Error("history_ambiguous");
+              }
+              if (!ref.chatId) {
+                threads.push({
+                  ...target,
+                  chatId: null,
+                  snapshot: null,
+                  reason: "chat_missing",
+                });
+                continue;
+              }
+              if (totalSize >= 1780000) {
+                threads.push({
+                  ...target,
+                  chatId: ref.chatId,
+                  snapshot: null,
+                  reason: "snapshot_limit",
+                });
+                continue;
+              }
+              const url = `https://hh.ru/chat/${ref.chatId}`;
+              if (
+                !accountMatches(job.hhAccountKey, await freshSessionIdentity())
+              ) {
+                throw new Error("account_changed");
+              }
+              let snapshot: string | null = null;
+              try {
+                snapshot = await withOwnedTab(
+                  url,
+                  async (chatTab) => {
+                    await loaded(chatTab, url, job);
+                    // HH embeds Chatik. Read only same-chat HH frames inside this
+                    // owned tab; unrelated/ad frames return null without inspection.
+                    let snapshots: string[] = [];
+                    try {
+                      const results = await chromeApi.scripting.executeScript({
+                        target: { tabId: chatTab, allFrames: true },
+                        world: "ISOLATED",
+                        func: readChatSnapshot,
+                        args: [
+                          ref.chatId!,
+                          ref.expectedMessages,
+                          true,
+                          job.hhAccountKey.match(
+                            /^hh-applicant-([1-9]\d{0,30})$/u,
+                          )?.[1] ?? null,
+                        ],
+                      });
+                      snapshots = results
+                        .filter(
+                          (r) =>
+                            !("error" in r && r.error) &&
+                            Number.isSafeInteger(r.frameId) &&
+                            typeof r.result === "string",
+                        )
+                        .map((r) => r.result as string);
+                    } catch {
+                      /* A denied embedded frame does not hide the top-frame result. */
+                    }
+                    if (!snapshots.length) {
+                      const result = await inject(chatTab, readChatSnapshot, [
+                        ref.chatId!,
+                        ref.expectedMessages,
+                        false,
+                        job.hhAccountKey.match(
+                          /^hh-applicant-([1-9]\d{0,30})$/u,
+                        )?.[1] ?? null,
+                      ]);
+                      if (result.value) snapshots.push(result.value);
+                    }
+                    if (
+                      !committedReadTarget(
+                        requireRunnableTab(await chromeApi.tabs.get(chatTab)),
+                        url,
+                      )
+                    ) {
+                      throw new Error("unexpected_hh_navigation");
+                    }
+                    return (
+                      snapshots.find(
+                        (s) =>
+                          s.includes('data-read-format="hh-chat-api-v1"') &&
+                          s.includes('data-api-has-more="false"') &&
+                          s.includes('data-read-truncated="false"'),
+                      ) ??
+                      snapshots.find((s) =>
+                        s.includes('data-read-format="hh-chat-api-v1"'),
+                      ) ??
+                      snapshots.find((s) =>
+                        s.includes(`data-captured-chat-id="${ref.chatId}"`),
+                      ) ??
+                      snapshots[0] ??
+                      null
+                    );
+                  },
+                  job,
+                );
+              } catch (error) {
+                const reason = error instanceof Error ? error.message : "";
+                if (
+                  ![
+                    "hh_read_failed",
+                    "hh_page_timeout",
+                    "unexpected_hh_navigation",
+                    "hh_tab_suspended",
+                  ].includes(reason)
+                ) {
+                  throw error;
+                }
+              }
+              if (
+                !accountMatches(job.hhAccountKey, await freshSessionIdentity())
+              ) {
+                throw new Error("account_changed");
+              }
+              if (Date.parse(job.expiresAt) <= Date.now()) {
+                throw new Error("lease_expired");
+              }
+              if (snapshot) totalSize += snapshot.length;
+              threads.push({
+                ...target,
+                chatId: ref.chatId,
+                snapshot,
+                reason: snapshot ? null : "chat_not_loaded",
+              });
+            }
+            return {
+              kind: "read_hh_correspondence",
+              readerVersion: "hh-chat-dom-v1",
+              observedAt: new Date().toISOString(),
+              complete: true,
+              threads,
+            };
+          }
+          return result(true);
+        }
+        if (p.kind === "read_application_outcomes") {
+          const resumes = new Map<string, string>();
+          const observations = new Map<string, OutcomeObservation>();
+          for (const target of p.targets) {
+            if (!resumes.has(target.resumeId)) {
+              resumes.set(
+                target.resumeId,
+                (
+                  await resumeRead(
+                    `${HH}/resume/${target.resumeId}`,
+                    target.resumeId,
+                  )
+                ).internalId,
+              );
+            }
+            if (resumes.get(target.resumeId) !== target.resumeInternalId) {
+              throw new Error("resume_identity_mismatch");
+            }
+          }
+          let pages = 0;
+          const result = (complete: boolean): JobResult => ({
+            kind: "read_application_outcomes",
+            readerVersion: "hh-application-outcomes-v1",
+            observedAt: new Date().toISOString(),
+            pages,
+            complete,
+            observations: [...observations.values()],
+          });
+          for (const filter of ["active", "archived", "deleted"] as const) {
+            let expectedPages;
+            for (let page = 0; ; page++) {
+              if (pages >= p.maxPages) return result(false);
+              const data = await read(
+                `${HH}/applicant/negotiations?filter=${filter}&page=${page}`,
+                "history",
+                async (documentId) =>
+                  (
+                    await inject(
+                      tabId,
+                      readApplicationOutcomesPage,
+                      [
+                        {
+                          filter,
+                          page,
+                          targets: p.targets,
+                          hhAccountKey: job.hhAccountKey,
+                        },
+                      ],
+                      documentId,
+                    )
+                  ).value,
+              );
+              pages++;
+              expectedPages ??= Math.max(1, data.pageCount);
+              if (expectedPages !== Math.max(1, data.pageCount)) {
+                throw new Error("incomplete_history_page");
+              }
+              for (const row of data.observations) {
+                if (observations.has(row.negotiationId)) {
+                  throw new Error("history_ambiguous");
+                }
+                observations.set(row.negotiationId, row);
+              }
+              if (page + 1 === expectedPages && !data.hasNext) break;
+              if (page + 1 >= expectedPages || !data.hasNext) {
+                throw new Error("incomplete_history_page");
+              }
+            }
+          }
+          return result(true);
+        }
+        const resume = await resumeRead(initialUrl, p.resumeId);
+        let pages = 0;
+        const exact = new Map<string, HistoryObservation>();
+        const observed = new Map<string, string>();
+        for (const filter of ["active", "archived", "deleted"] as const) {
+          let expectedPages;
+          for (let page = 0; ; page++) {
+            if (pages >= MAX_HISTORY_PAGES) {
+              throw new Error("incomplete_history_page");
+            }
+            const data = await historyRead(
+              `${HH}/applicant/negotiations?filter=${filter}&page=${page}`,
+              filter,
+              page,
             );
             pages++;
             expectedPages ??= Math.max(1, data.pageCount);
@@ -1044,10 +1141,21 @@ export function createChromeExecution(
               throw new Error("incomplete_history_page");
             }
             for (const row of data.observations) {
-              if (observations.has(row.negotiationId)) {
-                throw new Error("history_ambiguous");
+              const identity = `${row.vacancyId}:${row.resumeInternalId}:${row.initiatedByApplicant}`;
+              if (
+                observed.has(row.negotiationId) &&
+                observed.get(row.negotiationId) !== identity
+              ) {
+                throw new Error("history_identity_missing");
               }
-              observations.set(row.negotiationId, row);
+              observed.set(row.negotiationId, identity);
+              if (
+                row.vacancyId === p.vacancyId &&
+                row.resumeInternalId === resume.internalId &&
+                row.initiatedByApplicant
+              ) {
+                exact.set(row.negotiationId, row);
+              }
             }
             if (page + 1 === expectedPages && !data.hasNext) break;
             if (page + 1 >= expectedPages || !data.hasNext) {
@@ -1055,67 +1163,24 @@ export function createChromeExecution(
             }
           }
         }
-        return result(true);
-      }
-      const resume = await resumeRead(initialUrl, p.resumeId);
-      let pages = 0;
-      const exact = new Map<string, HistoryObservation>();
-      const observed = new Map<string, string>();
-      for (const filter of ["active", "archived", "deleted"] as const) {
-        let expectedPages;
-        for (let page = 0; ; page++) {
-          if (pages >= MAX_HISTORY_PAGES) {
-            throw new Error("incomplete_history_page");
-          }
-          const data = await historyRead(
-            `${HH}/applicant/negotiations?filter=${filter}&page=${page}`,
-            filter,
-            page,
+        if (exact.size !== 1) {
+          throw new Error(
+            exact.size ? "history_ambiguous" : "history_not_confirmed",
           );
-          pages++;
-          expectedPages ??= Math.max(1, data.pageCount);
-          if (expectedPages !== Math.max(1, data.pageCount)) {
-            throw new Error("incomplete_history_page");
-          }
-          for (const row of data.observations) {
-            const identity = `${row.vacancyId}:${row.resumeInternalId}:${row.initiatedByApplicant}`;
-            if (
-              observed.has(row.negotiationId) &&
-              observed.get(row.negotiationId) !== identity
-            ) {
-              throw new Error("history_identity_missing");
-            }
-            observed.set(row.negotiationId, identity);
-            if (
-              row.vacancyId === p.vacancyId &&
-              row.resumeInternalId === resume.internalId &&
-              row.initiatedByApplicant
-            ) {
-              exact.set(row.negotiationId, row);
-            }
-          }
-          if (page + 1 === expectedPages && !data.hasNext) break;
-          if (page + 1 >= expectedPages || !data.hasNext) {
-            throw new Error("incomplete_history_page");
-          }
         }
-      }
-      if (exact.size !== 1) {
-        throw new Error(
-          exact.size ? "history_ambiguous" : "history_not_confirmed",
-        );
-      }
-      return {
-        kind: p.kind,
-        originalJobId: p.originalJobId,
-        vacancyId: p.vacancyId,
-        resumeId: p.resumeId,
-        resumeInternalId: resume.internalId,
-        negotiationId: [...exact.keys()][0],
-        pages,
-        complete: true,
-      };
-    });
+        return {
+          kind: p.kind,
+          originalJobId: p.originalJobId,
+          vacancyId: p.vacancyId,
+          resumeId: p.resumeId,
+          resumeInternalId: resume.internalId,
+          negotiationId: [...exact.keys()][0],
+          pages,
+          complete: true,
+        };
+      },
+      job,
+    );
   }
   return {
     identity,
