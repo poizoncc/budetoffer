@@ -296,6 +296,163 @@ test("empty history counts, tracking ID and applicant status cannot establish ow
   }
 });
 
+test("full history reads all active and archived pages when the zero-total deleted list has no pagination controls", async () => {
+  for (const empty of [
+    {},
+    { pageCount: "0" },
+    { pageCount: "1", paging: null },
+    { pageCount: 0, paging: {} },
+    { pageCount: "0", paging: { next: null } },
+    { pageCount: "0", paging: { next: { disabled: true } } },
+  ]) {
+    let homeReads = 0;
+    const visited: string[] = [];
+    const chrome = browser((url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname !== "/applicant/negotiations") {
+        homeReads++;
+        return html();
+      }
+      const filter = parsed.searchParams.get("filter");
+      const page = Number(parsed.searchParams.get("page"));
+      visited.push(`${filter}:${page}`);
+      let data: Record<string, unknown>;
+      if (filter === "deleted") {
+        data = { filterInUse: filter, total: 0, topicList: [], ...empty };
+      } else {
+        const total = filter === "active" ? 48 : 114;
+        const offset = filter === "active" ? 0 : 1000;
+        const pageCount = Math.ceil(total / 20);
+        data = {
+          filterInUse: filter,
+          total,
+          pageCount: String(pageCount),
+          paging: { next: { disabled: page + 1 === pageCount } },
+          topicList: Array.from(
+            { length: Math.min(20, total - page * 20) },
+            (_, index) => ({
+              id: String(offset + page * 20 + index + 1),
+              vacancyId: "123",
+              resumeId: "42",
+              applicantUserId: 101,
+              initialState: "RESPONSE",
+            }),
+          ),
+        };
+      }
+      return html({ userId: undefined, applicantNegotiations: data });
+    });
+    try {
+      const result = await createChromeExecution(chrome.api, null, {
+        load: async () => null,
+      }).execute(job({ kind: "read_hh_history", maxPages: 120 }));
+      assert.equal(result.outcome, "confirmed", JSON.stringify(empty));
+      if (result.result?.kind !== "read_hh_history") {
+        assert.fail("history result required");
+      }
+      assert.equal(result.result.complete, true);
+      assert.equal(result.result.pages, 10);
+      assert.equal(result.result.observations.length, 162);
+      assert.equal(homeReads, 3);
+      assert.deepEqual(visited, [
+        "active:0",
+        "active:1",
+        "active:2",
+        "archived:0",
+        "archived:1",
+        "archived:2",
+        "archived:3",
+        "archived:4",
+        "archived:5",
+        "deleted:0",
+      ]);
+      assert.equal(chrome.tabs.size, 1);
+    } finally {
+      chrome.close();
+    }
+  }
+});
+
+test("empty full-history pages reject conflicting counts, enabled next links and missing account proof", () => {
+  const request = {
+    filter: "deleted" as const,
+    page: 0,
+    hhAccountKey: "hh-applicant-101",
+    observedAt: new Date().toISOString(),
+    sessionVerifiedEmpty: true,
+  };
+  for (const override of [
+    { total: 1 },
+    { total: "0" },
+    { total: undefined },
+    { pageCount: "2" },
+    { pageCount: "unknown" },
+    { paging: "unknown" },
+    { paging: { next: { disabled: false } } },
+    { paging: { next: {} } },
+  ]) {
+    const dom = new JSDOM(
+      html({
+        userId: undefined,
+        applicantNegotiations: {
+          filterInUse: "deleted",
+          total: 0,
+          topicList: [],
+          ...override,
+        },
+      }),
+      {
+        url: "https://hh.ru/applicant/negotiations?filter=deleted&page=0",
+        runScripts: "outside-only",
+      },
+    );
+    try {
+      const identity = runSerialized(dom, readHistoryAccountIdentity, [
+        null,
+        null,
+        true,
+      ]) as { emptyHistoryPage: boolean };
+      assert.equal(identity.emptyHistoryPage, false, JSON.stringify(override));
+      assert.throws(() => runSerialized(dom, readFullHistoryPage, [request]));
+    } finally {
+      dom.window.close();
+    }
+  }
+  const dom = new JSDOM(
+    html({
+      userId: undefined,
+      applicantNegotiations: {
+        filterInUse: "deleted",
+        total: 0,
+        topicList: [],
+      },
+    }),
+    {
+      url: "https://hh.ru/applicant/negotiations?filter=deleted&page=0",
+      runScripts: "outside-only",
+    },
+  );
+  try {
+    assert.equal(runSerialized(dom, readHistoryAccountIdentity, []), null);
+    assert.throws(
+      () =>
+        runSerialized(dom, readFullHistoryPage, [
+          { ...request, sessionVerifiedEmpty: false },
+        ]),
+      /account_identity_unverified/,
+    );
+    assert.throws(
+      () =>
+        runSerialized(dom, readFullHistoryPage, [
+          { ...request, hhAccountKey: "" },
+        ]),
+      /account_identity_unverified/,
+    );
+  } finally {
+    dom.window.close();
+  }
+});
+
 function browser(
   page: (url: string) => string,
   redirect: (url: string) => string = (url) => url,

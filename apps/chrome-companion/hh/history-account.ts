@@ -73,6 +73,12 @@ export function readHistoryAccountIdentity(
     // This is evidence of an empty list, never evidence of its owner. Only the
     // dry-run full-history caller may bind it to separately fresh HH identity.
     const filter = url.searchParams.get("filter");
+    const paging = history?.paging;
+    const noNextPage =
+      paging == null ||
+      (record(paging) &&
+        (paging.next == null ||
+          (record(paging.next) && paging.next.disabled === true)));
     if (
       Array.isArray(topics) &&
       topics.length === 0 &&
@@ -83,15 +89,20 @@ export function readHistoryAccountIdentity(
       url.search === `?filter=${filter}&page=0` &&
       history.filterInUse === filter &&
       history.total === 0 &&
-      [0, 1].includes(Number(history.pageCount)) &&
-      record(history.paging) &&
-      record(history.paging.next) &&
-      history.paging.next.disabled === true
+      [undefined, null, 0, 1, "0", "1"].some(
+        (value) => value === history.pageCount,
+      ) &&
+      noNextPage
     ) {
       return result(null, "history_identity_missing", true);
     }
     if (!Array.isArray(topics) || !topics.length || topics.length > 1000) {
-      return result(null, "history_identity_missing");
+      return result(
+        null,
+        Array.isArray(topics) && topics.length === 0 && history?.total === 0
+          ? "incomplete_history_page"
+          : "history_identity_missing",
+      );
     }
     const owners = new Set<string>();
     for (const row of topics) {

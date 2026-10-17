@@ -88,18 +88,28 @@ export function readFullHistoryPage(
   const owner = request.hhAccountKey?.match(
     /^hh-applicant-([1-9]\d{0,30})$/u,
   )?.[1];
+  const paging = data.paging;
+  const noNextPage =
+    paging == null ||
+    (record(paging) &&
+      (paging.next == null ||
+        (record(paging.next) && paging.next.disabled === true)));
+  // HH can omit pagination entirely for a zero-total list. Explicit zero rows
+  // and total establish emptiness; absent controls never establish an owner.
+  const emptyPage =
+    request.page === 0 &&
+    data.topicList.length === 0 &&
+    data.total === 0 &&
+    [undefined, null, 0, 1, "0", "1"].some(
+      (value) => value === data.pageCount,
+    ) &&
+    noNextPage;
   // The caller verifies a fresh authenticated homepage before and after this
   // exact empty document. This exception never produces private row evidence.
   const checkedEmpty =
     request.sessionVerifiedEmpty === true &&
-    request.page === 0 &&
     state.userId === undefined &&
-    data.topicList.length === 0 &&
-    data.total === 0 &&
-    [0, 1].includes(Number(data.pageCount)) &&
-    record(data.paging) &&
-    record(data.paging.next) &&
-    data.paging.next.disabled === true;
+    emptyPage;
   if (
     !owner ||
     (state.userId !== undefined && numeric(state.userId) !== owner) ||
@@ -110,14 +120,14 @@ export function readFullHistoryPage(
   ) {
     fail("account_identity_unverified");
   }
-  const pageCount = Number(data.pageCount);
+  const pageCount = emptyPage ? 0 : Number(data.pageCount);
   const next =
     record(data.paging) && record(data.paging.next) ? data.paging.next : null;
   if (
     !Number.isInteger(pageCount) ||
     pageCount < 0 ||
     pageCount > 10_000 ||
-    typeof next?.disabled !== "boolean"
+    (!emptyPage && typeof next?.disabled !== "boolean")
   ) {
     fail("incomplete_history_page");
   }
@@ -199,7 +209,7 @@ export function readFullHistoryPage(
   return {
     observations,
     pageCount,
-    hasNext: !next.disabled,
+    hasNext: emptyPage ? false : next?.disabled === false,
     filter: request.filter,
   };
 }
