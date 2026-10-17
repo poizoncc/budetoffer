@@ -336,6 +336,51 @@ export function readPublicationResumeArtifacts(
     seen.add(skillId);
     keySkills.push(name);
   }
+  // Read the owned resume's content container, never the whole document or its
+  // initial state (which also contains account/session internals). textContent
+  // reads CSS-clamped experience descriptions without clicking or changing HH.
+  let profileRoot: Element | null = title.parentElement;
+  while (
+    profileRoot &&
+    profileRoot !== documentRef.body &&
+    profileRoot !== documentRef.documentElement &&
+    (!profileRoot.contains(aboutCard) || !profileRoot.contains(skillCard))
+  )
+    profileRoot = profileRoot.parentElement;
+  const main = title.closest('main,[role="main"],[data-qa="resume"]');
+  if (main?.contains(aboutCard) && main.contains(skillCard)) profileRoot = main;
+  let fullText: string | undefined;
+  if (
+    profileRoot &&
+    profileRoot !== documentRef.body &&
+    profileRoot !== documentRef.documentElement
+  ) {
+    const copy = profileRoot.cloneNode(true) as Element;
+    copy
+      .querySelectorAll(
+        'script,style,template,nav,aside,footer,button,input,select,textarea,iframe,[role="navigation"],[data-qa*="recommendation"],[data-qa*="promotion"]',
+      )
+      .forEach((node) => node.remove());
+    function readText(node: Node): string {
+      if (node.nodeType === 3) return node.textContent ?? "";
+      if (node.nodeType !== 1) return "";
+      const tag = (node as Element).tagName;
+      if (tag === "BR") return "\n";
+      const text = Array.from(node.childNodes).map(readText).join("");
+      return /^(?:H[1-6]|P|DIV|SECTION|ARTICLE|LI|UL|OL|DL|DT|DD|TR|TABLE|MAIN|HEADER)$/u.test(
+        tag,
+      )
+        ? `\n${text}\n`
+        : text;
+    }
+    const text = readText(copy)
+      .replace(/[\t\u00a0 ]+/gu, " ")
+      .replace(/ *\n */gu, "\n")
+      .replace(/\n{3,}/gu, "\n\n")
+      .trim();
+    if (text.length > 200000) fail("resume_full_profile_too_large");
+    if (text && text.includes(headline)) fullText = text;
+  }
   return {
     kind: "resume_artifact_readback",
     readerVersion: "hh-owned-resume-dom-v1",
@@ -345,6 +390,7 @@ export function readPublicationResumeArtifacts(
     headline,
     about,
     keySkills,
+    ...(fullText ? { fullText } : {}),
   };
 }
 

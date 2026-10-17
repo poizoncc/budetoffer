@@ -127,6 +127,7 @@ export interface ResumeArtifact {
   headline: string;
   about: string;
   keySkills: string[];
+  fullText?: string;
 }
 export interface ReconciliationResult {
   kind: "reconcile_history";
@@ -429,7 +430,11 @@ export function isJobResult(value: unknown): value is JobResult {
         typeof a.internalId === "string" &&
         typeof a.headline === "string" &&
         typeof a.about === "string" &&
-        isStringArray(a.keySkills)
+        isStringArray(a.keySkills) &&
+        (a.fullText === undefined ||
+          (typeof a.fullText === "string" &&
+            a.fullText.trim().length > 0 &&
+            a.fullText.length <= 200000))
       );
     }
     case "discover_search":

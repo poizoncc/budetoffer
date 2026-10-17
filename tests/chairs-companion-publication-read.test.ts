@@ -101,6 +101,42 @@ function page(
   );
   return Object.assign(dom, { fixtureState: state });
 }
+test("owned resume full text includes career, education and additional fields while excluding page navigation and session state", () => {
+  const dom = page();
+  const doc = dom.window.document,
+    root = doc.createElement("main");
+  for (const child of Array.from(doc.body.children)) root.append(child);
+  root.insertAdjacentHTML(
+    "beforeend",
+    '<section data-qa="resume-experience-card"><h2>Опыт работы</h2><p>Example company</p><p>2020–2026</p><div style="-webkit-line-clamp:2">Полное описание обязанностей без сокращения</div></section><section><h2>Образование</h2><p>Synthetic university</p><p>Английский — B2</p><p>Готовность к переезду</p></section><aside>Buy advertisement</aside><nav>Global navigation</nav><script>secret-session-token</script>',
+  );
+  doc.body.append(root);
+  const artifact = readPublicationResumeArtifacts(
+    target,
+    doc,
+    dom.window.location.href,
+  );
+  for (const field of [
+    "Опыт работы",
+    "Example company",
+    "2020–2026",
+    "Полное описание обязанностей без сокращения",
+    "Образование",
+    "Synthetic university",
+    "Английский — B2",
+    "Готовность к переезду",
+  ])
+    assert.ok(artifact.fullText?.includes(field), field);
+  for (const forbidden of [
+    "secret-session-token",
+    "HH-Lux-InitialState",
+    "Buy advertisement",
+    "Global navigation",
+    "Развернуть",
+  ])
+    assert.ok(!artifact.fullText?.includes(forbidden), forbidden);
+  assert.equal(isJobResult({ kind: "read_resume_artifact", artifact }), true);
+});
 test("serialized static reader uses grounded owned resume fields and full text without clicks", () => {
   const dom = page();
   let clicks = 0;

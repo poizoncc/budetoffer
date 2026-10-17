@@ -8,7 +8,9 @@
 
 ## Скачать и установить
 
-**[Скачать последнюю версию — budetoffer-chrome.zip](https://github.com/poizoncc/budetoffer/releases/latest/download/budetoffer-chrome.zip)** · [Все версии и изменения](https://github.com/poizoncc/budetoffer/releases)
+**[Скачать последнюю версию — budetoffer-chrome.zip](https://my.budetoffer.ru/downloads/budetoffer-chrome.zip)** · [Все версии и изменения](https://github.com/poizoncc/budetoffer/releases)
+
+Версия 0.2.16 читает полный текст страницы вашего резюме, включая опыт, образование, языки и остальные заполненные поля. Перед сохранением проверьте текст в кабинете. Если HH не предоставил раздел на странице резюме, расширение не восстанавливает его по догадке.
 
 Выбирайте вложение **budetoffer-chrome.zip** в релизе. Автоматические архивы GitHub **Source code** содержат этот репозиторий и не устанавливаются как расширение.
 
