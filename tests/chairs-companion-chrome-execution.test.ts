@@ -544,7 +544,7 @@ function browser(
 test("chat capture is bound to fresh owned negotiation identities and never sends a message", async () => {
   const chrome = browser((url) => {
     const u = new URL(url);
-    if (u.hostname === "chatik.hh.ru") {
+    if (u.pathname === "/chat/77") {
       return '<main data-chat-id="77"><div data-qa="message-list"><div data-qa="message" data-message-id="9" data-author-type="employer">Заполните анкету <a href="https://forms.example.org/start">Анкета</a><script>private_secret</script><input value="private_input"><span hidden>private_hidden</span></div></div></main>';
     }
     let topicId = "3";
@@ -573,6 +573,15 @@ test("chat capture is bound to fresh owned negotiation identities and never send
     }
     return html();
   });
+  const inject = chrome.api.scripting.executeScript;
+  chrome.api.scripting.executeScript = async (script) => {
+    const results = await inject(script);
+    if (script.func.name === readChatSnapshot.name) {
+      assert.ok("allFrames" in script.target && script.target.allFrames);
+      results[0].frameId = 7;
+    }
+    return results;
+  };
   try {
     const result = await createChromeExecution(chrome.api, null, {
       load: async () => null,
@@ -657,12 +666,52 @@ test("serialized chat reader makes only a fixed GET and projects message data wi
     const snapshot = await runSerialized(dom, readChatSnapshot, ["77", 1]);
     assert.ok(snapshot);
     assert.equal(requests.length, 1);
-    assert.equal(requests[0].url, "/chatik/api/chat_data?chatId=77");
+    assert.equal(
+      requests[0].url,
+      "https://chatik.hh.ru/chatik/api/chat_data?chatId=77",
+    );
     assert.equal(requests[0].options.method, "GET");
     assert.equal(requests[0].options.redirect, "error");
     assert.match(snapshot, /hh-chat-api-v1/);
     assert.match(snapshot, /Ссылка на анкету/);
     assert.doesNotMatch(snapshot, /private_token|private_cookie|private_email/);
+  } finally {
+    dom.window.close();
+  }
+});
+test("chat diagnostics stay bounded even on a large unsupported document and unrelated frames stay unread", async () => {
+  const markup = Array.from(
+    { length: 100 },
+    (_, i) =>
+      `<div data-qa="qa${i}_${"&amp;".repeat(1000)}" class="class${i}_${"&amp;".repeat(1000)}">private_body</div>`,
+  ).join("");
+  const dom = new JSDOM(markup, {
+    url: "https://hh.ru/chat/77",
+    runScripts: "outside-only",
+  });
+  dom.window.setTimeout = ((handler: () => void) => {
+    handler();
+    return 0;
+  }) as typeof dom.window.setTimeout;
+  try {
+    const diagnostic = await runSerialized(dom, readChatSnapshot, ["77", 1]);
+    assert.ok(diagnostic);
+    assert.ok(diagnostic.length < 20000);
+    assert.match(diagnostic, /hh-chat-diagnostic-v1/);
+    assert.match(diagnostic, /0.2.25/);
+    assert.doesNotMatch(diagnostic, /private_body/);
+    dom.reconfigure({ url: "https://chatik.hh.ru/chat/78?without_list=1" });
+    assert.equal(
+      await runSerialized(dom, readChatSnapshot, ["77", 1, true]),
+      null,
+    );
+    dom.reconfigure({ url: "https://chatik.hh.ru/chat/77?without_list=1" });
+    dom.window.document.body.innerHTML =
+      '<main data-chat-id="77"><div data-qa="message" data-message-id="1">Visible message</div></main>';
+    assert.match(
+      (await runSerialized(dom, readChatSnapshot, ["77", 1, true])) ?? "",
+      /Visible message/,
+    );
   } finally {
     dom.window.close();
   }

@@ -5,19 +5,25 @@
 export async function readChatSnapshot(
   chatId: string,
   expectedMessages: number | null = null,
+  embedded = false,
 ): Promise<string | null> {
   const url = new URL(globalThis.location.href);
   if (
     url.protocol !== "https:" ||
-    !["hh.ru", "chatik.hh.ru"].includes(url.hostname) ||
+    !/(^|\.)hh\.ru$/u.test(url.hostname) ||
     url.port ||
     url.username ||
     url.password ||
     url.hash ||
     url.pathname !== `/chat/${chatId}` ||
-    url.search ||
+    [...url.searchParams].some(
+      ([key, value]) =>
+        !["without_list", "platform", "theme"].includes(key) ||
+        !/^[A-Za-z0-9_-]{1,32}$/u.test(value),
+    ) ||
     !/^[1-9]\d{0,30}$/u.test(chatId)
   ) {
+    if (embedded) return null;
     throw new Error("history_target_mismatch");
   }
   const escape = (value: string): string =>
@@ -29,16 +35,13 @@ export async function readChatSnapshot(
   // Never copy cookies, headers or a complete initial-state object to the BFF.
   let apiStatus: number | null = null;
   let apiFailure = "fetch_unavailable";
-  if (
-    url.hostname === "chatik.hh.ru" &&
-    typeof globalThis.fetch === "function"
-  ) {
+  if (typeof globalThis.fetch === "function") {
     try {
       const response = await globalThis.fetch(
-        `/chatik/api/chat_data?chatId=${chatId}`,
+        `https://chatik.hh.ru/chatik/api/chat_data?chatId=${chatId}`,
         {
           method: "GET",
-          credentials: "same-origin",
+          credentials: "include",
           redirect: "error",
           cache: "no-store",
           signal: AbortSignal.timeout(8000),
@@ -54,6 +57,33 @@ export async function readChatSnapshot(
           const value: unknown = JSON.parse(raw);
           const fields = new Set([
             "chat",
+            "result",
+            "chatData",
+            "chat_data",
+            "message",
+            "messageText",
+            "senderType",
+            "authorParticipantId",
+            "chatParticipantId",
+            "user",
+            "messagesPage",
+            "collection",
+            "textHtml",
+            "textSegments",
+            "segments",
+            "children",
+            "isSelf",
+            "direction",
+            "uuid",
+            "isLastPage",
+            "totalPages",
+            "lastPage",
+            "nextPage",
+            "hasNextPage",
+            "hasPreviousPage",
+            "from",
+            "to",
+            "creationDate",
             "chatId",
             "topicId",
             "id",
@@ -121,7 +151,10 @@ export async function readChatSnapshot(
             itemsLimit: number,
             depth = 0,
           ): unknown {
-            if (depth > 8) return null;
+            if (depth > 8) {
+              truncated = true;
+              return null;
+            }
             if (typeof input === "string") {
               if (input.length > 10000) truncated = true;
               return input.slice(0, 10000);
@@ -261,24 +294,26 @@ export async function readChatSnapshot(
   // They contain no message text, profile data, cookies or attribute values
   // other than public UI class/test names, and cannot masquerade as messages.
   const diagnostics = {
+    reader: "0.2.25",
+    host: url.hostname,
     apiStatus,
     apiFailure,
     qa: [
       ...new Set(
         [...document.querySelectorAll("[data-qa]")].map((e) =>
-          e.getAttribute("data-qa"),
+          e.getAttribute("data-qa")?.slice(0, 64),
         ),
       ),
-    ].slice(0, 100),
+    ].slice(0, 16),
     classes: [
       ...new Set(
         [...document.querySelectorAll("[class]")].map((e) =>
-          e.getAttribute("class"),
+          e.getAttribute("class")?.slice(0, 64),
         ),
       ),
-    ].slice(0, 100),
+    ].slice(0, 12),
     frameCount: document.querySelectorAll("iframe").length,
   };
   const report = `<section data-captured-chat-id="" data-read-format="hh-chat-diagnostic-v1"><pre data-qa="chat-read-diagnostic">${escape(JSON.stringify(diagnostics))}</pre></section>`;
-  return report.length <= 20000 ? report : null;
+  return report;
 }

@@ -14,6 +14,7 @@ export interface CompanionScript<Args extends unknown[], Result> {
   target: { tabId: number } & (
     | { documentIds: string[]; frameIds?: never }
     | { documentIds?: never; frameIds: number[] }
+    | { documentIds?: never; frameIds?: never; allFrames: true }
   );
   world: "ISOLATED";
   func: (...args: Args) => Result;

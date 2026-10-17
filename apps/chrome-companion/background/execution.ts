@@ -859,7 +859,7 @@ export function createChromeExecution(
               });
               continue;
             }
-            const url = `https://chatik.hh.ru/chat/${ref.chatId}`;
+            const url = `https://hh.ru/chat/${ref.chatId}`;
             if (
               !accountMatches(job.hhAccountKey, await freshSessionIdentity())
             ) {
@@ -867,10 +867,31 @@ export function createChromeExecution(
             }
             const snapshot = await withOwnedTab(url, async (chatTab) => {
               await loaded(chatTab, url, job);
-              const value = await inject(chatTab, readChatSnapshot, [
-                ref.chatId!,
-                ref.expectedMessages,
-              ]);
+              // HH embeds Chatik. Read only same-chat HH frames inside this
+              // owned tab; unrelated/ad frames return null without inspection.
+              let snapshots: string[] = [];
+              try {
+                const results = await chromeApi.scripting.executeScript({
+                  target: { tabId: chatTab, allFrames: true },
+                  world: "ISOLATED",
+                  func: readChatSnapshot,
+                  args: [ref.chatId!, ref.expectedMessages, true],
+                });
+                snapshots = results
+                  .filter(
+                    (r) =>
+                      !("error" in r && r.error) &&
+                      Number.isSafeInteger(r.frameId) &&
+                      typeof r.result === "string",
+                  )
+                  .map((r) => r.result as string);
+              } catch {
+                const result = await inject(chatTab, readChatSnapshot, [
+                  ref.chatId!,
+                  ref.expectedMessages,
+                ]);
+                if (result.value) snapshots.push(result.value);
+              }
               if (
                 !committedReadTarget(
                   requireRunnableTab(await chromeApi.tabs.get(chatTab)),
@@ -879,7 +900,16 @@ export function createChromeExecution(
               ) {
                 throw new Error("unexpected_hh_navigation");
               }
-              return value.value;
+              return (
+                snapshots.find((s) =>
+                  s.includes('data-read-format="hh-chat-api-v1"'),
+                ) ??
+                snapshots.find((s) =>
+                  s.includes(`data-captured-chat-id="${ref.chatId}"`),
+                ) ??
+                snapshots[0] ??
+                null
+              );
             });
             if (
               !accountMatches(job.hhAccountKey, await freshSessionIdentity())
