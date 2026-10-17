@@ -865,52 +865,76 @@ export function createChromeExecution(
             ) {
               throw new Error("account_changed");
             }
-            const snapshot = await withOwnedTab(url, async (chatTab) => {
-              await loaded(chatTab, url, job);
-              // HH embeds Chatik. Read only same-chat HH frames inside this
-              // owned tab; unrelated/ad frames return null without inspection.
-              let snapshots: string[] = [];
-              try {
-                const results = await chromeApi.scripting.executeScript({
-                  target: { tabId: chatTab, allFrames: true },
-                  world: "ISOLATED",
-                  func: readChatSnapshot,
-                  args: [ref.chatId!, ref.expectedMessages, true],
-                });
-                snapshots = results
-                  .filter(
-                    (r) =>
-                      !("error" in r && r.error) &&
-                      Number.isSafeInteger(r.frameId) &&
-                      typeof r.result === "string",
+            let snapshot: string | null = null;
+            try {
+              snapshot = await withOwnedTab(url, async (chatTab) => {
+                await loaded(chatTab, url, job);
+                // HH embeds Chatik. Read only same-chat HH frames inside this
+                // owned tab; unrelated/ad frames return null without inspection.
+                let snapshots: string[] = [];
+                try {
+                  const results = await chromeApi.scripting.executeScript({
+                    target: { tabId: chatTab, allFrames: true },
+                    world: "ISOLATED",
+                    func: readChatSnapshot,
+                    args: [ref.chatId!, ref.expectedMessages, true],
+                  });
+                  snapshots = results
+                    .filter(
+                      (r) =>
+                        !("error" in r && r.error) &&
+                        Number.isSafeInteger(r.frameId) &&
+                        typeof r.result === "string",
+                    )
+                    .map((r) => r.result as string);
+                } catch {
+                  /* A denied embedded frame does not hide the top-frame result. */
+                }
+                if (!snapshots.length) {
+                  const result = await inject(chatTab, readChatSnapshot, [
+                    ref.chatId!,
+                    ref.expectedMessages,
+                  ]);
+                  if (result.value) snapshots.push(result.value);
+                }
+                if (
+                  !committedReadTarget(
+                    requireRunnableTab(await chromeApi.tabs.get(chatTab)),
+                    url,
                   )
-                  .map((r) => r.result as string);
-              } catch {
-                const result = await inject(chatTab, readChatSnapshot, [
-                  ref.chatId!,
-                  ref.expectedMessages,
-                ]);
-                if (result.value) snapshots.push(result.value);
-              }
+                ) {
+                  throw new Error("unexpected_hh_navigation");
+                }
+                return (
+                  snapshots.find(
+                    (s) =>
+                      s.includes('data-read-format="hh-chat-api-v1"') &&
+                      s.includes('data-api-has-more="false"') &&
+                      s.includes('data-read-truncated="false"'),
+                  ) ??
+                  snapshots.find((s) =>
+                    s.includes('data-read-format="hh-chat-api-v1"'),
+                  ) ??
+                  snapshots.find((s) =>
+                    s.includes(`data-captured-chat-id="${ref.chatId}"`),
+                  ) ??
+                  snapshots[0] ??
+                  null
+                );
+              });
+            } catch (error) {
+              const reason = error instanceof Error ? error.message : "";
               if (
-                !committedReadTarget(
-                  requireRunnableTab(await chromeApi.tabs.get(chatTab)),
-                  url,
-                )
+                ![
+                  "hh_read_failed",
+                  "hh_page_timeout",
+                  "unexpected_hh_navigation",
+                  "hh_tab_suspended",
+                ].includes(reason)
               ) {
-                throw new Error("unexpected_hh_navigation");
+                throw error;
               }
-              return (
-                snapshots.find((s) =>
-                  s.includes('data-read-format="hh-chat-api-v1"'),
-                ) ??
-                snapshots.find((s) =>
-                  s.includes(`data-captured-chat-id="${ref.chatId}"`),
-                ) ??
-                snapshots[0] ??
-                null
-              );
-            });
+            }
             if (
               !accountMatches(job.hhAccountKey, await freshSessionIdentity())
             ) {

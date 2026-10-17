@@ -55,8 +55,242 @@ export async function readChatSnapshot(
         const raw = await response.text();
         if (raw.length <= 1000000) {
           const value: unknown = JSON.parse(raw);
+          const record = (item: unknown): Record<string, unknown> =>
+            item && typeof item === "object" && !Array.isArray(item)
+              ? (item as Record<string, unknown>)
+              : {};
+          const envelope = record(value);
+          const chat = record(envelope.chat);
+          const messages = record(chat.messages);
+          let apiPages = 1;
+          // Older-page URLs must come from HH resources or a request made by
+          // the rendered history scroller. Never guess a cursor or call an
+          // action endpoint. All requests remain GETs for this owned chat.
+          const initialUrl = `https://chatik.hh.ru/chatik/api/chat_data?chatId=${chatId}`;
+          const visited = new Set([initialUrl]);
+          function messagePageUrl(input: unknown): string | null {
+            if (typeof input !== "string") return null;
+            try {
+              const next = new URL(input, "https://chatik.hh.ru");
+              if (
+                next.origin !== "https://chatik.hh.ru" ||
+                next.username ||
+                next.password ||
+                next.hash ||
+                !/^\/chatik\/api\/(?:chat_data|messages|chat_messages|get_messages)$/u.test(
+                  next.pathname,
+                ) ||
+                next.searchParams.getAll("chatId").length !== 1 ||
+                next.searchParams.get("chatId") !== chatId
+              ) {
+                return null;
+              }
+              for (const [key, parameter] of next.searchParams) {
+                if (
+                  ![
+                    "chatId",
+                    "fromMessageId",
+                    "toMessageId",
+                    "beforeMessageId",
+                    "afterMessageId",
+                    "lastMessageId",
+                    "firstMessageId",
+                    "olderThan",
+                    "newerThan",
+                    "limit",
+                    "count",
+                    "offset",
+                    "page",
+                    "from",
+                    "to",
+                    "before",
+                    "after",
+                    "cursor",
+                    "direction",
+                    "size",
+                    "pageSize",
+                    "perPage",
+                    "order",
+                    "sort",
+                  ].includes(key) ||
+                  !/^[A-Za-z_]{1,40}$/u.test(key) ||
+                  /token|auth|secret|password|key|xsrf|url|redirect/iu.test(
+                    key,
+                  ) ||
+                  !/^[A-Za-z0-9_.:+=-]{1,160}$/u.test(parameter) ||
+                  next.searchParams.getAll(key).length !== 1
+                ) {
+                  return null;
+                }
+              }
+              return visited.has(next.href) ? null : next.href;
+            } catch {
+              return null;
+            }
+          }
+          function resourceUrls(input: unknown, depth = 0): string[] {
+            if (depth > 5) return [];
+            const node = record(input);
+            const urls: string[] = [];
+            for (const [key, item] of Object.entries(node)) {
+              if (
+                /resources|paging|pagination|chat|messages|next|previous|older|history|more|url|href|uri/iu.test(
+                  key,
+                )
+              ) {
+                const next = messagePageUrl(item);
+                if (next) urls.push(next);
+                else if (item && typeof item === "object") {
+                  urls.push(...resourceUrls(item, depth + 1));
+                }
+              }
+            }
+            return urls;
+          }
+          async function scrolledPageUrl(): Promise<string | null> {
+            if (url.hostname !== "chatik.hh.ru") return null;
+            let scroller: HTMLElement | null = null;
+            for (
+              let renderAttempt = 0;
+              renderAttempt < 12 && !scroller;
+              renderAttempt++
+            ) {
+              const candidates = [
+                ...document.querySelectorAll(
+                  '[data-qa*="message"],[class*="message"]',
+                ),
+              ];
+              for (const candidate of candidates) {
+                let parent = candidate.parentElement;
+                while (parent) {
+                  const style = getComputedStyle(parent);
+                  if (
+                    parent.scrollHeight > parent.clientHeight + 10 &&
+                    /auto|scroll/u.test(style.overflowY)
+                  ) {
+                    scroller = parent;
+                    break;
+                  }
+                  parent = parent.parentElement;
+                }
+                if (scroller) break;
+              }
+              if (!scroller) {
+                await new Promise<void>((resolve) => setTimeout(resolve, 250));
+              }
+            }
+            if (!scroller) return null;
+            scroller.scrollTop = 1;
+            scroller.scrollTop = 0;
+            for (let attempt = 0; attempt < 12; attempt++) {
+              const entries = performance.getEntriesByType("resource");
+              for (let index = entries.length - 1; index >= 0; index--) {
+                const entry = entries[index];
+                if (
+                  !("initiatorType" in entry) ||
+                  !["fetch", "xmlhttprequest"].includes(
+                    String(entry.initiatorType),
+                  )
+                ) {
+                  continue;
+                }
+                const next = messagePageUrl(entries[index].name);
+                if (next) return next;
+              }
+              await new Promise<void>((resolve) => setTimeout(resolve, 250));
+            }
+            return null;
+          }
+          let pageEvidence: unknown = value;
+          let pageAttempts = 0;
+          while (
+            messages.hasMore === true &&
+            Array.isArray(messages.items) &&
+            apiPages < 10 &&
+            pageAttempts++ < 12
+          ) {
+            try {
+              const nextUrl =
+                resourceUrls(pageEvidence)[0] ?? (await scrolledPageUrl());
+              if (!nextUrl) break;
+              visited.add(nextUrl);
+              const nextResponse = await globalThis.fetch(nextUrl, {
+                method: "GET",
+                credentials: "include",
+                redirect: "error",
+                cache: "no-store",
+                signal: AbortSignal.timeout(8000),
+              });
+              if (
+                !nextResponse.ok ||
+                !nextResponse.headers.get("content-type")?.includes("json")
+              ) {
+                break;
+              }
+              const nextRaw = await nextResponse.text();
+              if (nextRaw.length > 1000000) break;
+              const nextData: unknown = JSON.parse(nextRaw);
+              const nextObject = record(nextData);
+              const nextChat = record(nextObject.chat);
+              if (
+                (nextChat.id != null && String(nextChat.id) !== chatId) ||
+                (nextObject.chatId != null &&
+                  String(nextObject.chatId) !== chatId)
+              ) {
+                break;
+              }
+              const nextMessages = record(
+                nextChat.messages ?? nextObject.messages ?? nextData,
+              );
+              if (
+                !Array.isArray(nextMessages.items) ||
+                typeof nextMessages.hasMore !== "boolean"
+              ) {
+                break;
+              }
+              if (
+                nextMessages.items.some((item) => {
+                  const row = record(item);
+                  return (
+                    row.id == null ||
+                    (row.chatId != null && String(row.chatId) !== chatId)
+                  );
+                })
+              ) {
+                break;
+              }
+              const merged = new Map(
+                messages.items.map((item) => [String(record(item).id), item]),
+              );
+              const priorSize = merged.size;
+              for (const item of nextMessages.items) {
+                merged.set(String(record(item).id), item);
+              }
+              if (merged.size === priorSize && nextMessages.hasMore) {
+                pageEvidence = nextData;
+                continue;
+              }
+              messages.items = [...merged.values()];
+              messages.hasMore = nextMessages.hasMore;
+              apiPages++;
+              pageEvidence = nextData;
+            } catch {
+              break;
+            }
+          }
           const fields = new Set([
             "chat",
+            "resources",
+            "currentParticipantId",
+            "participantDisplay",
+            "participantsIds",
+            "buttons",
+            "textButtons",
+            "label",
+            "params",
+            "parameters",
+            "action",
+            "linkUrl",
             "result",
             "chatData",
             "chat_data",
@@ -192,11 +426,11 @@ export async function readChatSnapshot(
             }
             return result;
           }
-          for (const itemsLimit of [100, 40, 20, 10, 5, 1]) {
+          for (const itemsLimit of [200, 100, 80, 40, 20, 10, 5, 1]) {
             truncated = false;
             const content = escape(JSON.stringify(project(value, itemsLimit)));
-            const captured = `<section data-captured-chat-id="${chatId}" data-expected-message-count="${expectedMessages ?? ""}" data-read-truncated="${truncated}" data-read-format="hh-chat-api-v1"><pre data-qa="chat-api-data">${content}</pre></section>`;
-            if (captured.length <= 20000) return captured;
+            const captured = `<section data-captured-chat-id="${chatId}" data-expected-message-count="${expectedMessages ?? ""}" data-read-truncated="${truncated}" data-api-pages="${apiPages}" data-api-has-more="${messages.hasMore === true}" data-read-format="hh-chat-api-v1"><pre data-qa="chat-api-data">${content}</pre></section>`;
+            if (captured.length <= 60000) return captured;
           }
           apiFailure = "response_limit";
         } else apiFailure = "response_limit";
@@ -212,6 +446,15 @@ export async function readChatSnapshot(
       style.display !== "none" &&
       style.visibility !== "hidden"
     );
+  }
+  // The HH shell contains no message history; its owned Chatik frame is read
+  // concurrently. Do not make every chat wait for the shell's DOM fallback.
+  if (
+    embedded &&
+    url.hostname !== "chatik.hh.ru" &&
+    document.querySelector('iframe[src*="chatik.hh.ru"]')
+  ) {
+    return diagnostic();
   }
   function snapshot(): string | null {
     const bound = document.querySelector(
@@ -293,27 +536,30 @@ export async function readChatSnapshot(
   // Structural diagnostics are safe to use to repair an adapter on the BFF.
   // They contain no message text, profile data, cookies or attribute values
   // other than public UI class/test names, and cannot masquerade as messages.
-  const diagnostics = {
-    reader: "0.2.25",
-    host: url.hostname,
-    apiStatus,
-    apiFailure,
-    qa: [
-      ...new Set(
-        [...document.querySelectorAll("[data-qa]")].map((e) =>
-          e.getAttribute("data-qa")?.slice(0, 64),
+  return diagnostic();
+  function diagnostic(): string {
+    const diagnostics = {
+      reader: "0.2.26",
+      host: url.hostname,
+      apiStatus,
+      apiFailure,
+      qa: [
+        ...new Set(
+          [...document.querySelectorAll("[data-qa]")].map((e) =>
+            e.getAttribute("data-qa")?.slice(0, 64),
+          ),
         ),
-      ),
-    ].slice(0, 16),
-    classes: [
-      ...new Set(
-        [...document.querySelectorAll("[class]")].map((e) =>
-          e.getAttribute("class")?.slice(0, 64),
+      ].slice(0, 16),
+      classes: [
+        ...new Set(
+          [...document.querySelectorAll("[class]")].map((e) =>
+            e.getAttribute("class")?.slice(0, 64),
+          ),
         ),
-      ),
-    ].slice(0, 12),
-    frameCount: document.querySelectorAll("iframe").length,
-  };
-  const report = `<section data-captured-chat-id="" data-read-format="hh-chat-diagnostic-v1"><pre data-qa="chat-read-diagnostic">${escape(JSON.stringify(diagnostics))}</pre></section>`;
-  return report;
+      ].slice(0, 12),
+      frameCount: document.querySelectorAll("iframe").length,
+    };
+    const report = `<section data-captured-chat-id="" data-read-format="hh-chat-diagnostic-v1"><pre data-qa="chat-read-diagnostic">${escape(JSON.stringify(diagnostics))}</pre></section>`;
+    return report;
+  }
 }

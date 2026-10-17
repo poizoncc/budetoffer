@@ -630,6 +630,90 @@ test("serialized chat reader refuses a different chat and unsafe host before rea
     }
   }
 });
+test("one unavailable chat preserves the other targets while account changes still stop the whole read", async () => {
+  for (const failure of ["hh_read_failed", "account_changed"] as const) {
+    const chrome = browser((url) => {
+      const u = new URL(url);
+      if (u.pathname.startsWith("/chat/")) {
+        return '<main data-chat-id="78"><div data-qa="message" data-message-id="1">Retained reply</div></main>';
+      }
+      if (u.pathname === "/applicant/negotiations") {
+        return html({
+          applicantNegotiations: {
+            filterInUse: u.searchParams.get("filter"),
+            pageCount: 1,
+            total: u.searchParams.get("filter") === "active" ? 2 : 0,
+            paging: { next: { disabled: true } },
+            topicList:
+              u.searchParams.get("filter") === "active"
+                ? [
+                    {
+                      id: 1,
+                      vacancyId: 123,
+                      resumeId: 42,
+                      applicantUserId: 101,
+                      chatId: 77,
+                      conversationMessagesCount: 1,
+                    },
+                    {
+                      id: 2,
+                      vacancyId: 124,
+                      resumeId: 42,
+                      applicantUserId: 101,
+                      chatId: 78,
+                      conversationMessagesCount: 1,
+                    },
+                  ]
+                : [],
+          },
+        });
+      }
+      return html();
+    });
+    const inject = chrome.api.scripting.executeScript;
+    chrome.api.scripting.executeScript = async (script) => {
+      if (
+        script.func.name === readChatSnapshot.name &&
+        script.args[0] === "77"
+      ) {
+        throw Error(failure);
+      }
+      return inject(script);
+    };
+    try {
+      const receipt = await createChromeExecution(chrome.api, null, {
+        load: async () => null,
+      }).execute(
+        job({
+          kind: "read_hh_correspondence",
+          historyJobId: "source",
+          targets: [
+            { negotiationId: "1", vacancyId: "123", resumeInternalId: "42" },
+            { negotiationId: "2", vacancyId: "124", resumeInternalId: "42" },
+          ],
+        }),
+      );
+      if (failure === "account_changed") {
+        assert.equal(receipt.outcome, "needs_user");
+        assert.equal(receipt.evidence.reasonCode, "account_changed");
+        assert.equal(receipt.result, undefined);
+      } else {
+        assert.equal(receipt.outcome, "confirmed");
+        assert.equal(receipt.result?.kind, "read_hh_correspondence");
+        if (receipt.result?.kind === "read_hh_correspondence") {
+          assert.equal(receipt.result.threads[0].reason, "chat_not_loaded");
+          assert.match(
+            receipt.result.threads[1].snapshot ?? "",
+            /Retained reply/,
+          );
+        }
+      }
+      assert.equal(chrome.tabs.size, 1);
+    } finally {
+      chrome.close();
+    }
+  }
+});
 test("serialized chat reader makes only a fixed GET and projects message data without secrets", async () => {
   const dom = new JSDOM("<main></main>", {
     url: "https://chatik.hh.ru/chat/77",
@@ -698,7 +782,7 @@ test("chat diagnostics stay bounded even on a large unsupported document and unr
     assert.ok(diagnostic);
     assert.ok(diagnostic.length < 20000);
     assert.match(diagnostic, /hh-chat-diagnostic-v1/);
-    assert.match(diagnostic, /0.2.25/);
+    assert.match(diagnostic, /0.2.26/);
     assert.doesNotMatch(diagnostic, /private_body/);
     dom.reconfigure({ url: "https://chatik.hh.ru/chat/78?without_list=1" });
     assert.equal(
@@ -714,6 +798,122 @@ test("chat diagnostics stay bounded even on a large unsupported document and unr
     );
   } finally {
     dom.window.close();
+  }
+});
+test("chat pagination follows only observed same-chat GET resources, merges overlap and preserves a failed partial read", async () => {
+  for (const scenario of [
+    "complete",
+    "foreign-url",
+    "mutation-url",
+    "foreign-result",
+    "network-failure",
+  ] as const) {
+    const dom = new JSDOM("<main></main>", {
+      url: "https://chatik.hh.ru/chat/77",
+      runScripts: "outside-only",
+    });
+    const requests: string[] = [];
+    const next =
+      "https://chatik.hh.ru/chatik/api/messages?chatId=77&beforeMessageId=2";
+    let resourceUrl = next;
+    if (scenario === "foreign-url") resourceUrl = "https://example.org/private";
+    if (scenario === "mutation-url") {
+      resourceUrl = "https://chatik.hh.ru/chatik/api/send?chatId=77";
+    }
+    dom.window.AbortSignal.timeout = AbortSignal.timeout;
+    dom.window.fetch = (async (
+      input: string | URL | Request,
+      options: RequestInit,
+    ) => {
+      const request = String(input);
+      requests.push(request);
+      assert.equal(options.method, "GET");
+      assert.equal(options.redirect, "error");
+      if (requests.length === 1) {
+        return new Response(
+          JSON.stringify({
+            chat: {
+              id: 77,
+              type: "NEGOTIATION",
+              messages: {
+                items: [
+                  {
+                    id: 2,
+                    chatId: 77,
+                    participantId: "202",
+                    type: "SIMPLE",
+                    text: "Latest response",
+                  },
+                ],
+                hasMore: true,
+              },
+              resources: {
+                messages: resourceUrl,
+              },
+            },
+            resources: {
+              participants: {
+                101: { type: "APPLICANT", email: "private_email" },
+                202: { type: "EMPLOYER" },
+              },
+            },
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      assert.equal(request, next);
+      if (scenario === "network-failure") throw Error("private_network_detail");
+      return new Response(
+        JSON.stringify({
+          chat: {
+            id: scenario === "foreign-result" ? 78 : 77,
+            messages: {
+              items: [
+                {
+                  id: 1,
+                  chatId: 77,
+                  participantId: "101",
+                  type: "SIMPLE",
+                  text: "Older response",
+                },
+                {
+                  id: 2,
+                  chatId: 77,
+                  participantId: "202",
+                  type: "SIMPLE",
+                  text: "Latest response",
+                },
+              ],
+              hasMore: false,
+            },
+          },
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+    try {
+      const snapshot = await runSerialized(dom, readChatSnapshot, ["77", 2]);
+      assert.ok(snapshot);
+      assert.match(snapshot, /Latest response/);
+      assert.doesNotMatch(snapshot, /private_email|private_network_detail/);
+      const parsed = new JSDOM(snapshot);
+      const data = JSON.parse(
+        parsed.window.document.querySelector("pre")!.textContent!,
+      );
+      parsed.window.close();
+      assert.equal(data.chat.messages.hasMore, scenario !== "complete");
+      if (scenario === "complete") {
+        assert.match(snapshot, /Older response/);
+        assert.match(snapshot, /data-api-pages="2"/);
+        assert.equal(data.chat.messages.items.length, 2);
+      } else assert.doesNotMatch(snapshot, /Older response/);
+      assert.equal(
+        requests.length,
+        ["foreign-url", "mutation-url"].includes(scenario) ? 1 : 2,
+      );
+    } finally {
+      dom.window.close();
+    }
   }
 });
 function pages(url: string) {
@@ -760,6 +960,80 @@ function pages(url: string) {
   }
   return html();
 }
+test("chat pagination discovers the observed history request by scrolling, without executing message buttons", async () => {
+  const dom = new JSDOM(
+    '<div id="history" style="overflow-y:auto"><div data-qa="message">Latest</div><button>Send</button></div>',
+    { url: "https://chatik.hh.ru/chat/77", runScripts: "outside-only" },
+  );
+  const scroller = dom.window.document.getElementById("history")!;
+  Object.defineProperty(scroller, "scrollHeight", { value: 500 });
+  Object.defineProperty(scroller, "clientHeight", { value: 100 });
+  let top = 100;
+  let scrolled = false;
+  let clicks = 0;
+  Object.defineProperty(scroller, "scrollTop", {
+    get: () => top,
+    set: (value: number) => {
+      top = value;
+      if (value === 0) scrolled = true;
+    },
+  });
+  dom.window.document
+    .querySelector("button")!
+    .addEventListener("click", () => clicks++);
+  const next =
+    "https://chatik.hh.ru/chatik/api/messages?chatId=77&beforeMessageId=2";
+  Object.defineProperty(dom.window.performance, "getEntriesByType", {
+    value: () =>
+      scrolled
+        ? [
+            {
+              name: "https://chatik.hh.ru/chatik/api/messages?chatId=77&action=delete",
+              initiatorType: "img",
+            },
+            { name: next, initiatorType: "fetch" },
+          ]
+        : [],
+  });
+  const requests: string[] = [];
+  dom.window.AbortSignal.timeout = AbortSignal.timeout;
+  dom.window.fetch = (async (
+    input: string | URL | Request,
+    options: RequestInit,
+  ) => {
+    requests.push(String(input));
+    assert.equal(options.method, "GET");
+    return new Response(
+      JSON.stringify(
+        requests.length === 1
+          ? {
+              chat: {
+                id: 77,
+                messages: {
+                  items: [{ id: 2, chatId: 77, text: "Latest" }],
+                  hasMore: true,
+                },
+              },
+            }
+          : { items: [{ id: 1, chatId: 77, text: "Older" }], hasMore: false },
+      ),
+      { headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+  try {
+    const snapshot = await runSerialized(dom, readChatSnapshot, ["77", 2]);
+    assert.ok(snapshot);
+    assert.match(snapshot, /Older/);
+    assert.match(snapshot, /data-api-pages="2"/);
+    assert.deepEqual(requests, [
+      "https://chatik.hh.ru/chatik/api/chat_data?chatId=77",
+      next,
+    ]);
+    assert.equal(clicks, 0);
+  } finally {
+    dom.window.close();
+  }
+});
 test("search reads full details, deduplicates across pages and reports bounded partial coverage", async () => {
   const chrome = browser((url) => {
     const parsed = new URL(url);

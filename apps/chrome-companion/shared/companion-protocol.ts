@@ -530,7 +530,7 @@ export function isJobResult(value: unknown): value is JobResult {
             ) &&
             (t.chatId === null || typeof t.chatId === "string") &&
             (t.snapshot === null ||
-              (typeof t.snapshot === "string" && t.snapshot.length <= 20000)) &&
+              (typeof t.snapshot === "string" && t.snapshot.length <= 60000)) &&
             (t.reason === null || typeof t.reason === "string"),
         )
       );
