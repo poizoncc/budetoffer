@@ -621,6 +621,52 @@ test("serialized chat reader refuses a different chat and unsafe host before rea
     }
   }
 });
+test("serialized chat reader makes only a fixed GET and projects message data without secrets", async () => {
+  const dom = new JSDOM("<main></main>", {
+    url: "https://chatik.hh.ru/chat/77",
+    runScripts: "outside-only",
+  });
+  const requests: Array<{ url: string; options: RequestInit }> = [];
+  dom.window.fetch = (async (
+    url: string | URL | Request,
+    options: RequestInit,
+  ) => {
+    requests.push({ url: String(url), options });
+    return new Response(
+      JSON.stringify({
+        chatId: "77",
+        authToken: "private_token",
+        cookies: "private_cookie",
+        participants: [{ id: "10", type: "EMPLOYER", email: "private_email" }],
+        messages: {
+          items: [
+            {
+              id: "1",
+              authorId: "10",
+              text: "Ссылка на анкету",
+              creationTime: 1792227600000,
+            },
+          ],
+        },
+      }),
+      { headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+  dom.window.AbortSignal.timeout = AbortSignal.timeout;
+  try {
+    const snapshot = await runSerialized(dom, readChatSnapshot, ["77", 1]);
+    assert.ok(snapshot);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url, "/chatik/api/chat_data?chatId=77");
+    assert.equal(requests[0].options.method, "GET");
+    assert.equal(requests[0].options.redirect, "error");
+    assert.match(snapshot, /hh-chat-api-v1/);
+    assert.match(snapshot, /Ссылка на анкету/);
+    assert.doesNotMatch(snapshot, /private_token|private_cookie|private_email/);
+  } finally {
+    dom.window.close();
+  }
+});
 function pages(url: string) {
   const parsed = new URL(url);
   if (parsed.pathname.startsWith("/vacancy/")) {
