@@ -26,7 +26,10 @@ class ValidateReleaseTest(unittest.TestCase):
             "background": {"type": "module", "service_worker": "background/bootstrap.js"},
             "action": {"default_popup": "popup/index.html", "default_icon": {"16": "assets/budetoffer-icon-16.png"}},
             "icons": {"16": "assets/budetoffer-icon-16.png"},
-            "content_scripts": [{"matches": sorted(validator.HH_SCOPES), "js": ["hh/content.js"]}],
+            "content_scripts": [
+                {"matches": sorted(validator.HH_SCOPES), "js": ["hh/content.js"], "run_at": "document_idle"},
+                {"matches": [validator.ORIGIN + "/*"], "js": ["hh/cabinet-connect.js"], "run_at": "document_idle", "all_frames": False},
+            ],
         }
         self.files["popup/index.html"] = b'<script type="module" src="./assets/index-synthetic.js"></script>'
         self.files["popup/assets/index-synthetic.js"] = b"console.log('synthetic');"
@@ -109,6 +112,19 @@ class ValidateReleaseTest(unittest.TestCase):
                 with self.assertRaises(validator.ValidationError):
                     validator.validate_release(self.root)
                 self.files[name] = value
+
+    def test_cabinet_bridge_scope_and_isolation(self):
+        bridge = self.manifest["content_scripts"][1]
+        for field, value in [("matches", ["https://*.budetoffer.ru/*"]), ("matches", ["<all_urls>"]),
+                             ("world", "MAIN"), ("all_frames", True), ("js", ["hh/content.js"])]:
+            with self.subTest(field=field, value=value):
+                original = bridge.copy()
+                bridge[field] = value
+                self.write()
+                with self.assertRaises(validator.ValidationError):
+                    validator.validate_release(self.root)
+                bridge.clear()
+                bridge.update(original)
 
     def test_origin_and_destination_configuration(self):
         release = self.write()

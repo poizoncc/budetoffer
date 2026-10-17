@@ -44,6 +44,10 @@
           "sha256": "3a28d1309a1a5b7a4f2296247998a85e6779e8f644d2063802ad7f0b7831fe2e"
         },
         {
+          "path": "qrko-uikit/src/shadcn/collapsible.tsx",
+          "sha256": "abcb768c44324903a317e6c4e55f325513d0091184ca42d775798bc924ef8596"
+        },
+        {
           "path": "qrko-uikit/src/shadcn/input.tsx",
           "sha256": "e8ded1d5e9b6d2c6cad0ef1f1ec23d4a65c76fe3e1b724513b27f43eaac992e2"
         },

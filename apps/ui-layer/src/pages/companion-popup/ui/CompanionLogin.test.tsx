@@ -32,20 +32,26 @@ const pending = {
   phoneReachable: false,
 };
 
-it("keeps the cabinet code alternative in a keyboard-accessible native disclosure and accepts pasted codes", () => {
+it("keeps the cabinet code alternative in an accessible disclosure and accepts pasted codes", () => {
   const handlers = props({ code: "4gn5ty" });
   render(<CompanionLogin {...handlers} />);
   expect(
     screen.getByRole("button", { name: "Получить код входа" }),
   ).toBeTruthy();
-  const summary = screen.getByText("У меня уже есть код из кабинета");
-  expect(summary.parentElement?.tagName).toBe("DETAILS");
-  expect(summary.parentElement?.hasAttribute("open")).toBe(false);
-  fireEvent.click(summary);
+  const toggle = screen.getByRole("button", {
+    name: "У меня уже есть код из кабинета",
+  });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByRole("button", { name: "Войти по коду" })).toBeNull();
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
   const input = screen.getByLabelText("Код из кабинета");
   expect(input.getAttribute("autocomplete")).toBe("one-time-code");
   fireEvent.change(input, { target: { value: "4gn-5ty" } });
   expect(handlers.onCodeChange).toHaveBeenCalledWith("4GN-5TY");
+  fireEvent.click(toggle);
+  fireEvent.click(toggle);
+  expect(screen.getByLabelText("Код из кабинета")).toBe(input);
   fireEvent.click(screen.getByRole("button", { name: "Войти по коду" }));
   expect(handlers.onPair).toHaveBeenCalledOnce();
 });

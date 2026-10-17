@@ -10,8 +10,9 @@
       !message ||
       typeof message !== "object" ||
       Array.isArray(message)
-    )
+    ) {
       return;
+    }
     const value = message as Record<string, unknown>;
     if (
       value.type !== "budetoffer:cabinet-connect-request" ||
@@ -19,8 +20,9 @@
       !/^[a-zA-Z0-9-]{16,64}$/u.test(value.requestId) ||
       !["start", "status"].includes(String(value.action)) ||
       busy
-    )
+    ) {
       return;
+    }
     busy = true;
     void chrome.runtime
       .sendMessage({

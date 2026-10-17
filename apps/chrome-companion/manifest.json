@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BudetOffer Server Companion",
-  "version": "0.2.18",
+  "version": "0.2.19",
   "minimum_chrome_version": "120",
   "description": "BudetOffer companion for https://my.budetoffer.ru.",
   "icons": {
@@ -10,12 +10,7 @@
     "48": "assets/budetoffer-icon-48.png",
     "128": "assets/budetoffer-icon-128.png"
   },
-  "permissions": [
-    "activeTab",
-    "storage",
-    "scripting",
-    "alarms"
-  ],
+  "permissions": ["activeTab", "storage", "scripting", "alarms"],
   "host_permissions": [
     "https://my.budetoffer.ru:443/*",
     "https://hh.ru/*",
@@ -37,22 +32,13 @@
   },
   "content_scripts": [
     {
-      "matches": [
-        "https://hh.ru/*",
-        "https://*.hh.ru/*"
-      ],
-      "js": [
-        "hh/content.js"
-      ],
+      "matches": ["https://hh.ru/*", "https://*.hh.ru/*"],
+      "js": ["hh/content.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": [
-        "https://my.budetoffer.ru/*"
-      ],
-      "js": [
-        "hh/cabinet-connect.js"
-      ],
+      "matches": ["https://my.budetoffer.ru/*"],
+      "js": ["hh/cabinet-connect.js"],
       "run_at": "document_idle",
       "all_frames": false
     }

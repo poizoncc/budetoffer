@@ -345,8 +345,9 @@ export function readPublicationResumeArtifacts(
     profileRoot !== documentRef.body &&
     profileRoot !== documentRef.documentElement &&
     (!profileRoot.contains(aboutCard) || !profileRoot.contains(skillCard))
-  )
+  ) {
     profileRoot = profileRoot.parentElement;
+  }
   const main = title.closest('main,[role="main"],[data-qa="resume"]');
   if (main?.contains(aboutCard) && main.contains(skillCard)) profileRoot = main;
   let fullText: string | undefined;

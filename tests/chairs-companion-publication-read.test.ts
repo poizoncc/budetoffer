@@ -103,8 +103,8 @@ function page(
 }
 test("owned resume full text includes career, education and additional fields while excluding page navigation and session state", () => {
   const dom = page();
-  const doc = dom.window.document,
-    root = doc.createElement("main");
+  const doc = dom.window.document;
+  const root = doc.createElement("main");
   for (const child of Array.from(doc.body.children)) root.append(child);
   root.insertAdjacentHTML(
     "beforeend",
@@ -125,16 +125,18 @@ test("owned resume full text includes career, education and additional fields wh
     "Synthetic university",
     "Английский — B2",
     "Готовность к переезду",
-  ])
+  ]) {
     assert.ok(artifact.fullText?.includes(field), field);
+  }
   for (const forbidden of [
     "secret-session-token",
     "HH-Lux-InitialState",
     "Buy advertisement",
     "Global navigation",
     "Развернуть",
-  ])
+  ]) {
     assert.ok(!artifact.fullText?.includes(forbidden), forbidden);
+  }
   assert.equal(isJobResult({ kind: "read_resume_artifact", artifact }), true);
 });
 test("serialized static reader uses grounded owned resume fields and full text without clicks", () => {

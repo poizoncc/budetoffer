@@ -25,7 +25,7 @@ STATIC_FILES = {
     "background/service-worker.js", "background/execution.js", "background/application-execution.js",
     "background/device-login.js", "background/onboarding.js", "background/tab-state.js",
     "background/mutation.js", "background/publication.js", "hh/account.js", "hh/actions.js",
-    "hh/content.js", "hh/executor.js", "hh/outcomes.js", "hh/full-history.js", "hh/history-account.js",
+    "hh/content.js", "hh/cabinet-connect.js", "hh/executor.js", "hh/outcomes.js", "hh/full-history.js", "hh/history-account.js",
     "hh/history-limits.js", "hh/response-form.js", "popup/controller.js", "popup/index.html",
     "shared/config.js", "shared/destinations.js", "shared/onboarding.js",
     "shared/record.js", "shared/companion-protocol.js", "shared/chrome-api.js", "shared/ewans.js",
@@ -137,12 +137,24 @@ def validate_manifest(files, release):
         for name in icons.values():
             local_file(name, files)
     scripts = manifest.get("content_scripts")
-    require(isinstance(scripts, list) and len(scripts) == 1, "Unexpected content scripts")
-    script = scripts[0]
+    require(isinstance(scripts, list) and len(scripts) == 2
+            and all(isinstance(script, dict) for script in scripts), "Unexpected content scripts")
+    hh_scripts = [script for script in scripts if script.get("js") == ["hh/content.js"]]
+    cabinet_scripts = [script for script in scripts if script.get("js") == ["hh/cabinet-connect.js"]]
+    require(len(hh_scripts) == 1 and len(cabinet_scripts) == 1, "Unexpected content script entrypoints")
+    script = hh_scripts[0]
     require(isinstance(script.get("matches"), list) and len(script["matches"]) == 2
             and set(script["matches"]) == HH_SCOPES, "Content scripts must be scoped to HH")
     require(script.get("js") == ["hh/content.js"] and not script.get("css"), "Unexpected content script entrypoint")
     local_file("hh/content.js", files)
+    cabinet_script = cabinet_scripts[0]
+    require(cabinet_script.get("matches") == [ORIGIN + "/*"]
+            and not cabinet_script.get("css"), "Cabinet bridge must be scoped to the cabinet")
+    for script in scripts:
+        require(script.get("run_at") == "document_idle"
+                and script.get("all_frames", False) is False
+                and script.get("world", "ISOLATED") == "ISOLATED", "Unexpected content script execution context")
+    local_file("hh/cabinet-connect.js", files)
     popup = PopupAssets()
     popup.feed(files["popup/index.html"].decode("utf-8"))
     require(popup.scripts, "Missing built popup module")

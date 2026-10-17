@@ -1,6 +1,12 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { ArrowUpRight, Monitor, QrCode } from "lucide-react";
+import { Surface } from "@qrko/uikit/layout/Surface";
 import { Button } from "@/shared/ui/button";
+import {
+  Disclosure,
+  DisclosureContent,
+  DisclosureTrigger,
+} from "@/shared/ui/disclosure";
 import { Input } from "@/shared/ui/input";
 import {
   DEVICE_CODE_PATTERN,
@@ -277,39 +283,48 @@ export function CompanionLogin({
           </Button>
         </div>
       )}
-      <details className="companion-disclosure">
-        <summary>У меня уже есть код из кабинета</summary>
-        <form className="space-y-3 px-3 pb-3" onSubmit={handleSubmit}>
-          <label
-            htmlFor="companion-login-code"
-            className="block text-sm font-semibold"
-          >
-            Код из кабинета
-          </label>
-          <Input
-            id="companion-login-code"
-            autoComplete="one-time-code"
-            spellCheck={false}
-            placeholder="4GN-5TY"
-            maxLength={7}
-            value={code}
-            onChange={handleCodeChange}
-            aria-describedby="companion-code-help"
-            disabled={busy}
-          />
-          <p id="companion-code-help" className="text-xs text-muted-foreground">
-            Шесть символов без 0, O, 1, I и L. Код можно вставить.
-          </p>
-          <Button
-            className="w-full"
-            type="submit"
-            disabled={busy || !DEVICE_CODE_PATTERN.test(code.trim())}
-            loading={busy}
-          >
-            Войти по коду
-          </Button>
-        </form>
-      </details>
+      <Surface padding="none" className="rounded-[var(--radius-panel)]">
+        <Disclosure>
+          <DisclosureTrigger className="min-h-11 p-3 text-sm text-muted-foreground data-[state=open]:text-foreground">
+            У меня уже есть код из кабинета
+          </DisclosureTrigger>
+          <DisclosureContent>
+            <form className="space-y-3 px-3 pb-3" onSubmit={handleSubmit}>
+              <label
+                htmlFor="companion-login-code"
+                className="block text-sm font-semibold"
+              >
+                Код из кабинета
+              </label>
+              <Input
+                id="companion-login-code"
+                autoComplete="one-time-code"
+                spellCheck={false}
+                placeholder="4GN-5TY"
+                maxLength={7}
+                value={code}
+                onChange={handleCodeChange}
+                aria-describedby="companion-code-help"
+                disabled={busy}
+              />
+              <p
+                id="companion-code-help"
+                className="text-xs text-muted-foreground"
+              >
+                Шесть символов без 0, O, 1, I и L. Код можно вставить.
+              </p>
+              <Button
+                className="w-full"
+                type="submit"
+                disabled={busy || !DEVICE_CODE_PATTERN.test(code.trim())}
+                loading={busy}
+              >
+                Войти по коду
+              </Button>
+            </form>
+          </DisclosureContent>
+        </Disclosure>
+      </Surface>
     </section>
   );
 }

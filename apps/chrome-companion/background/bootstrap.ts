@@ -491,8 +491,9 @@ export function installPairedCompanion(
       let cabinetOrigin: string | null = null;
       try {
         const url = new URL(sender.url ?? "");
-        if (ORIGINS.has(url.origin) && url.pathname === "/profile")
+        if (ORIGINS.has(url.origin) && url.pathname === "/profile") {
           cabinetOrigin = url.origin;
+        }
       } catch {}
       if (
         sender.id !== chromeApi.runtime.id ||
@@ -508,14 +509,15 @@ export function installPairedCompanion(
           if (
             message.type === "chairs:cabinet-start-login" &&
             !valid(await read())
-          )
+          ) {
             await startLogin({
               origin: cabinetOrigin,
               label: "Chrome — подключён из кабинета",
             });
+          }
           if (message.type === "chairs:cabinet-login-status") await pollLogin();
-          const summary = await status(),
-            device = await read();
+          const summary = await status();
+          const device = await read();
           // Never return the access token or deviceCode to a web document.
           return {
             paired: summary.paired,

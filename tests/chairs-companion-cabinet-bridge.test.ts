@@ -18,8 +18,8 @@ test("cabinet bridge filters senders and commands and forwards only public statu
     url: "https://my.budetoffer.ru/profile",
     runScripts: "outside-only",
   });
-  const calls: unknown[] = [],
-    replies: unknown[] = [];
+  const calls: unknown[] = [];
+  const replies: unknown[] = [];
   Object.defineProperty(dom.window, "chrome", {
     value: {
       runtime: {

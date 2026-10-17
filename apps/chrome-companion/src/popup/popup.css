@@ -1,7 +1,7 @@
 @import "tailwindcss" source(none);
 @import "@qrko/uikit/theme.css";
 @source "../../../ui-layer/src/pages/companion-popup/**/*.{ts,tsx}";
-@source "../../../ui-layer/src/shared/ui/{button,input,textarea,checkbox,confirm-dialog}.tsx";
+@source "../../../ui-layer/src/shared/ui/{button,input,textarea,checkbox,confirm-dialog,disclosure}.tsx";
 @source "../../../../node_modules/@qrko/uikit/src/form/fieldSurface.ts";
 @source "../../../../node_modules/@qrko/uikit/src/layout/{Surface,UiPresentation}.tsx";
 @source "../../../../node_modules/@qrko/uikit/src/shadcn/{alert-dialog,button,checkbox,input,switch,tabs,textarea}.tsx";
@@ -142,25 +142,6 @@ body {
   height: 176px;
   margin: 0 auto;
   border-radius: var(--radius-lg);
-}
-.companion-disclosure {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
-}
-.companion-disclosure summary {
-  min-height: 44px;
-  padding: 12px;
-  cursor: pointer;
-  color: var(--color-muted-foreground);
-  font-size: 14px;
-}
-.companion-disclosure[open] summary {
-  color: var(--color-foreground);
-}
-.companion-disclosure summary:focus-visible {
-  outline: 2px solid var(--color-ring);
-  outline-offset: 2px;
-  border-radius: var(--radius-xl);
 }
 .companion-popup input {
   min-height: 44px;

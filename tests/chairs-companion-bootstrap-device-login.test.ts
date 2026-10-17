@@ -229,11 +229,12 @@ test("cabinet reconnect accepts only packaged same-origin profile messages and n
     { id: "trusted-extension", url: "https://hh.ru/profile" },
     { id: "other-extension", url: `${ORIGIN}/profile` },
     { id: "trusted-extension", url: `${ORIGIN}/queue` },
-  ])
+  ]) {
     await assert.rejects(
       f.message({ type: "chairs:cabinet-start-login" }, sender),
       /untrusted_message/u,
     );
+  }
   const sender = {
     id: "trusted-extension",
     url: `${ORIGIN}/profile?view=connections`,
@@ -265,16 +266,16 @@ test("cabinet reconnect accepts only packaged same-origin profile messages and n
   );
 });
 test("extension update retains a live device, accepted agreements and checkpoints without asking for login", async () => {
-  const f = fixture(),
-    worker = f.install();
+  const f = fixture();
+  const worker = f.install();
   await flush();
   await worker.startLogin({ origin: ORIGIN, label: "Synthetic Chrome" });
   f.approve();
   f.advance(30000);
   await worker.pollLogin();
   await worker.acceptOnboarding(agreements);
-  const device = structuredClone(f.stored(DEVICE_KEY)),
-    consent = structuredClone(f.stored(ONBOARDING_KEY));
+  const device = structuredClone(f.stored(DEVICE_KEY));
+  const consent = structuredClone(f.stored(ONBOARDING_KEY));
   f.update();
   await flush();
   assert.deepEqual(f.stored(DEVICE_KEY), device);

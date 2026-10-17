@@ -270,8 +270,11 @@ async function readCompanionManifest() {
     typeof value.minimum_chrome_version !== "string" ||
     !/^\d+$/u.test(value.minimum_chrome_version) ||
     !Array.isArray(value.host_permissions) ||
-    !value.host_permissions.every((host: unknown) => typeof host === "string") ||
-    !Array.isArray(value.content_scripts) || !value.content_scripts.every(record)
+    !value.host_permissions.every(
+      (host: unknown) => typeof host === "string",
+    ) ||
+    !Array.isArray(value.content_scripts) ||
+    !value.content_scripts.every(record)
   ) {
     throw new Error("invalid_companion_manifest");
   }
@@ -279,20 +282,34 @@ async function readCompanionManifest() {
     ...value,
     version: value.version,
     minimum_chrome_version: value.minimum_chrome_version,
-    content_scripts:value.content_scripts,
+    content_scripts: value.content_scripts,
   };
 }
 
 export async function createScopedServerCompanionManifest(origin: unknown) {
   const url = serverOrigin(origin);
   const manifest = await readCompanionManifest();
-  if(!Array.isArray(manifest.content_scripts))throw Error('invalid_companion_manifest');
+  if (!Array.isArray(manifest.content_scripts)) {
+    throw Error("invalid_companion_manifest");
+  }
   return {
     ...manifest,
     name: "BudetOffer Server Companion",
     description: `BudetOffer companion for ${url.origin}.`,
-    content_scripts:[...manifest.content_scripts.filter(entry=>!record(entry)||!Array.isArray(entry.js)||!entry.js.includes('hh/cabinet-connect.js')),
-      {matches:[`${url.origin}/*`],js:['hh/cabinet-connect.js'],run_at:'document_idle',all_frames:false}],
+    content_scripts: [
+      ...manifest.content_scripts.filter(
+        (entry) =>
+          !record(entry) ||
+          !Array.isArray(entry.js) ||
+          !entry.js.includes("hh/cabinet-connect.js"),
+      ),
+      {
+        matches: [`${url.origin}/*`],
+        js: ["hh/cabinet-connect.js"],
+        run_at: "document_idle",
+        all_frames: false,
+      },
+    ],
     host_permissions: [
       `https://${url.hostname}:${url.port || "443"}/*`,
       "https://hh.ru/*",
