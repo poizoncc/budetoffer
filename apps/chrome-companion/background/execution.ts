@@ -366,7 +366,7 @@ export function createChromeExecution(
     const searchUrl = (page: number) => {
       if (p.kind !== "discover_search") throw new Error("invalid_read_payload");
       const url = new URL(`${HH}/search/vacancy`);
-      url.searchParams.set("text", p.text);
+      if (p.text || !resumeSearchId) url.searchParams.set("text", p.text);
       for (const [key, value] of p.searchParameters ?? []) {
         url.searchParams.append(key, value);
       }
@@ -411,10 +411,15 @@ export function createChromeExecution(
                   "order_by",
                   "period",
                   "label",
+                  "resume",
                 ].includes(pair[0]) &&
                 typeof pair[1] === "string" &&
-                /^[a-zA-Z0-9_-]{1,80}$/u.test(pair[1]),
-            ))))
+                (pair[0] === "resume"
+                  ? /^[a-zA-Z0-9_-]{4,128}$/u
+                  : /^[a-zA-Z0-9_-]{1,80}$/u
+                ).test(pair[1]),
+            ) ||
+            p.searchParameters.filter(([key]) => key === "resume").length > 1)))
     ) {
       throw new Error("invalid_read_payload");
     }
@@ -454,6 +459,10 @@ export function createChromeExecution(
     ) {
       throw new Error("invalid_read_payload");
     }
+    const resumeSearchId =
+      p.kind === "discover_search"
+        ? p.searchParameters?.find(([key]) => key === "resume")?.[1]
+        : undefined;
     let initialUrl: string;
     switch (p.kind) {
       case "read_hh_history":
@@ -464,7 +473,9 @@ export function createChromeExecution(
         initialUrl = `${HH}/resume/${p.targets[0].resumeId}`;
         break;
       case "discover_search":
-        initialUrl = searchUrl(p.cursor?.page ?? 0);
+        initialUrl = resumeSearchId
+          ? `${HH}/resume/${resumeSearchId}`
+          : searchUrl(p.cursor?.page ?? 0);
         break;
       case "verify_vacancy":
         initialUrl = `${HH}/vacancy/${p.vacancyId}`;
@@ -623,6 +634,9 @@ export function createChromeExecution(
         };
       }
       if (p.kind === "discover_search") {
+        // Resume recommendations are private to their editable owner. Establish
+        // fresh ownership before searching, including every continuation job.
+        if (resumeSearchId) await resumeRead(initialUrl, resumeSearchId);
         const vacancies: SearchVacancy[] = [];
         const seen = new Set<string>();
         let pages = 0;

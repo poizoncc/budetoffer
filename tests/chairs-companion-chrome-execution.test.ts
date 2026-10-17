@@ -1195,6 +1195,255 @@ test("search reads full details, deduplicates across pages and reports bounded p
     chrome.close();
   }
 });
+test("resume recommendations verify editable ownership before root and continuation searches", async () => {
+  const visits: string[] = [];
+  const chrome = browser((url) => {
+    const parsed = new URL(url);
+    if (parsed.pathname !== "/") visits.push(parsed.pathname + parsed.search);
+    if (parsed.pathname === "/search/vacancy") {
+      assert.equal(parsed.searchParams.get("resume"), "resume-one");
+      assert.equal(parsed.searchParams.has("text"), false);
+      assert.equal(parsed.searchParams.get("area"), "1");
+      return html({
+        vacancySearchResult: {
+          vacancies: Array.from({ length: 21 }, (_, i) => ({
+            vacancyId: 100 + i,
+            name: "Synthetic recommendation",
+            company: { visibleName: "Synthetic" },
+          })),
+          paging: {
+            pages: [{ page: 0, selected: true }],
+            next: { disabled: true },
+          },
+        },
+      });
+    }
+    return pages(url);
+  });
+  try {
+    const execution = createChromeExecution(
+      chrome.api,
+      {},
+      { load: async () => null },
+    );
+    const payload: JobPayloads["discover_search"] = {
+      kind: "discover_search",
+      savedSearchId: "resume-search",
+      text: "",
+      maxPages: 2,
+      searchParameters: [
+        ["area", "1"],
+        ["resume", "resume-one"],
+      ],
+    };
+    const first = await execution.execute(job(payload));
+    assert.equal(first.outcome, "confirmed");
+    assert.ok(first.result?.kind === "discover_search");
+    assert.equal(first.result.vacancies.length, 20);
+    assert.equal(
+      first.result.vacancies[0]?.text,
+      "Full synthetic vacancy text",
+    );
+    assert.deepEqual(first.result.nextCursor, { page: 0, offset: 20 });
+    assert.deepEqual(visits.slice(0, 2), [
+      "/resume/resume-one",
+      "/search/vacancy?area=1&resume=resume-one&page=0",
+    ]);
+    visits.length = 0;
+    const next = await execution.execute(
+      job({
+        ...payload,
+        cursor: first.result.nextCursor!,
+        rootJobId: "root-resume-search",
+      }),
+    );
+    assert.equal(next.outcome, "confirmed");
+    assert.ok(next.result?.kind === "discover_search");
+    assert.equal(next.result.vacancies.length, 1);
+    assert.equal(next.result.vacancies[0]?.vacancyId, "120");
+    assert.equal(next.result.complete, true);
+    assert.deepEqual(visits.slice(0, 2), [
+      "/resume/resume-one",
+      "/search/vacancy?area=1&resume=resume-one&page=0",
+    ]);
+    assert.equal(chrome.tabs.size, 1);
+  } finally {
+    chrome.close();
+  }
+});
+test("resume search accepts owned targets at both identifier length boundaries", async () => {
+  for (const resumeId of ["abcd", "a".repeat(128)]) {
+    let searchReads = 0;
+    const chrome = browser((url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === `/resume/${resumeId}`) {
+        return html({
+          applicantResume: {
+            forbidden: null,
+            applicantUserStatuses: { "101": { jobSearchStatus: "synthetic" } },
+            _attributes: {
+              id: "42",
+              hash: resumeId,
+              user: "101",
+              permission: "edit",
+            },
+          },
+        });
+      }
+      if (parsed.pathname === "/search/vacancy") {
+        searchReads++;
+        assert.equal(parsed.searchParams.get("resume"), resumeId);
+        return html({
+          vacancySearchResult: {
+            vacancies: [],
+            paging: {
+              pages: [{ page: 0, selected: true }],
+              next: { disabled: true },
+            },
+          },
+        });
+      }
+      return pages(url);
+    });
+    try {
+      const receipt = await createChromeExecution(
+        chrome.api,
+        {},
+        { load: async () => null },
+      ).execute(
+        job({
+          kind: "discover_search",
+          savedSearchId: "resume-search",
+          text: "",
+          maxPages: 1,
+          searchParameters: [["resume", resumeId]],
+        }),
+      );
+      assert.equal(receipt.outcome, "confirmed");
+      assert.equal(searchReads, 1);
+      assert.equal(chrome.tabs.size, 1);
+    } finally {
+      chrome.close();
+    }
+  }
+});
+test("resume searches reject foreign owners, permissions and changed identity before opening recommendations", async () => {
+  for (const scenario of [
+    "owner",
+    "permission",
+    "hash",
+    "account",
+    "changed-after",
+  ] as const) {
+    let searchReads = 0;
+    const chrome = browser((url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === "/search/vacancy") searchReads++;
+      if (parsed.pathname === "/resume/resume-one") {
+        return html({
+          ...account(scenario === "account" ? "202" : "101"),
+          applicantResume: {
+            forbidden: null,
+            applicantUserStatuses: { "101": { jobSearchStatus: "synthetic" } },
+            _attributes: {
+              id: "42",
+              hash: scenario === "hash" ? "resume-two" : "resume-one",
+              user: scenario === "owner" ? "202" : "101",
+              permission: scenario === "permission" ? "view" : "edit",
+            },
+          },
+        });
+      }
+      return pages(url);
+    });
+    if (scenario === "changed-after") {
+      chrome.afterRead((dom) => {
+        dom.window.document.querySelector("template")!.innerHTML =
+          JSON.stringify(account("202"));
+      });
+    }
+    try {
+      const execution = createChromeExecution(
+        chrome.api,
+        {},
+        { load: async () => null },
+      );
+      for (const continuation of [false, true]) {
+        const receipt = await execution.execute(
+          job({
+            kind: "discover_search",
+            savedSearchId: "resume-search",
+            text: "",
+            maxPages: 2,
+            searchParameters: [["resume", "resume-one"]],
+            ...(continuation
+              ? {
+                  cursor: { page: 0, offset: 20 },
+                  rootJobId: "root-resume-search",
+                }
+              : {}),
+          }),
+        );
+        assert.equal(receipt.outcome, "needs_user");
+        assert.equal(receipt.result, undefined);
+        let reason = "resume_identity_mismatch";
+        if (scenario === "account") reason = "account_identity_unverified";
+        if (scenario === "changed-after") reason = "account_changed";
+        assert.equal(receipt.evidence.reasonCode, reason);
+        assert.equal(searchReads, 0);
+        assert.equal(chrome.tabs.size, 1);
+      }
+    } finally {
+      chrome.close();
+    }
+  }
+});
+test("resume search parameters reject empty, duplicate and unbounded targets before navigation", async () => {
+  const visits: string[] = [];
+  const chrome = browser((url) => {
+    visits.push(url);
+    return pages(url);
+  });
+  visits.length = 0;
+  try {
+    const execution = createChromeExecution(
+      chrome.api,
+      {},
+      { load: async () => null },
+    );
+    for (const searchParameters of [
+      [["resume", ""]],
+      [["resume", "abc"]],
+      [["resume", "a".repeat(129)]],
+      [
+        ["resume", "resume-one"],
+        ["resume", "resume-two"],
+      ],
+      [
+        ["resume", "resume-one"],
+        ["resume", "resume-one"],
+      ],
+      [["area", "a".repeat(81)]],
+      [["redirect", "resume-one"]],
+    ] as [string, string][][]) {
+      const receipt = await execution.execute(
+        job({
+          kind: "discover_search",
+          savedSearchId: "resume-search",
+          text: "",
+          maxPages: 1,
+          searchParameters,
+        }),
+      );
+      assert.equal(receipt.evidence.reasonCode, "invalid_read_payload");
+      assert.equal(receipt.result, undefined);
+    }
+    assert.deepEqual(visits, []);
+    assert.equal(chrome.tabs.size, 1);
+  } finally {
+    chrome.close();
+  }
+});
 test("search checks public cache before details and retains legacy fallback without changing issued payloads", async () => {
   let detailCalls = 0;
   let lookups = 0;
