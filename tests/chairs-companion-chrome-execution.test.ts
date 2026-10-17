@@ -127,6 +127,7 @@ test("history diagnostic snapshots preserve safe failure codes across serializat
       ]) as { accountKey: string | null; reasonCode: string | null };
       assert.deepEqual(Object.keys(snapshot).sort(), [
         "accountKey",
+        "emptyHistoryPage",
         "reasonCode",
       ]);
       assert.equal(snapshot.reasonCode, reason);
@@ -181,6 +182,90 @@ test("full history reads numeric and canonical string owners without accepting a
       }
     } finally {
       dom.window.close();
+    }
+  }
+});
+
+test("full history traverses48 owned rows and empty lists only with independently fresh matching identity", async () => {
+  for (const scenario of [
+    "matching",
+    "foreign-before",
+    "changed-after",
+    "inconsistent-empty",
+  ] as const) {
+    let homeReads = 0;
+    const chrome = browser((url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname !== "/applicant/negotiations") {
+        homeReads++;
+        return html(
+          account(
+            (scenario === "foreign-before" && homeReads >= 2) ||
+              (scenario === "changed-after" && homeReads >= 3)
+              ? "202"
+              : "101",
+          ),
+        );
+      }
+      const filter = parsed.searchParams.get("filter");
+      const page = Number(parsed.searchParams.get("page"));
+      const active = filter === "active";
+      let count = 0;
+      if (active) count = page < 2 ? 20 : 8;
+      let total = scenario === "inconsistent-empty" ? 5 : 0;
+      if (active) total = 48;
+      return html({
+        userId: undefined,
+        applicantNegotiations: {
+          filterInUse: filter,
+          total,
+          pageCount: active ? "3" : "0",
+          paging: { next: { disabled: !active || page === 2 } },
+          topicList: Array.from({ length: count }, (_, index) => ({
+            id: String(page * 20 + index + 1),
+            vacancyId: "123",
+            resumeId: "42",
+            applicantUserId: 101,
+            initialState: "RESPONSE",
+          })),
+        },
+      });
+    });
+    try {
+      const result = await createChromeExecution(chrome.api, null, {
+        load: async () => null,
+      }).execute(job({ kind: "read_hh_history", maxPages: 120 }));
+      if (scenario === "matching") {
+        assert.equal(result.outcome, "confirmed");
+        assert.equal(result.result?.kind, "read_hh_history");
+        if (result.result?.kind !== "read_hh_history") {
+          assert.fail("history result required");
+        }
+        assert.equal(result.result.complete, true);
+        assert.equal(result.result.pages, 5);
+        assert.equal(result.result.observations.length, 48);
+        assert.equal(
+          homeReads,
+          5,
+          "each empty list gets a fresh account check before and after",
+        );
+      } else {
+        assert.equal(result.outcome, "needs_user");
+        assert.equal(result.result, undefined);
+        let expected = "history_identity_missing";
+        if (scenario === "foreign-before") {
+          expected = "account_identity_unverified";
+        }
+        if (scenario === "changed-after") expected = "account_changed";
+        assert.equal(result.evidence.reasonCode, expected);
+      }
+      assert.equal(
+        chrome.tabs.size,
+        1,
+        "owned proof tabs close without closing the user tab",
+      );
+    } finally {
+      chrome.close();
     }
   }
 });

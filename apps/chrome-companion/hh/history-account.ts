@@ -5,9 +5,22 @@ export function readHistoryAccountIdentity(
   documentRef: Document | null = globalThis.document,
   locationHref: string | null = globalThis.location?.href,
   diagnostic = false,
-): string | null | { accountKey: string | null; reasonCode: string | null } {
-  function result(accountKey: string | null, reasonCode: string | null) {
-    return diagnostic ? { accountKey, reasonCode } : accountKey;
+):
+  | string
+  | null
+  | {
+      accountKey: string | null;
+      reasonCode: string | null;
+      emptyHistoryPage: boolean;
+    } {
+  function result(
+    accountKey: string | null,
+    reasonCode: string | null,
+    emptyHistoryPage = false,
+  ) {
+    return diagnostic
+      ? { accountKey, reasonCode, emptyHistoryPage }
+      : accountKey;
   }
   function ownerId(value: unknown): string | null {
     if (typeof value === "number") {
@@ -53,9 +66,30 @@ export function readHistoryAccountIdentity(
     ) {
       return result(null, "account_identity_unverified");
     }
-    const topics = record(data.applicantNegotiations)
-      ? data.applicantNegotiations.topicList
+    const history = record(data.applicantNegotiations)
+      ? data.applicantNegotiations
       : null;
+    const topics = history ? history.topicList : null;
+    // This is evidence of an empty list, never evidence of its owner. Only the
+    // dry-run full-history caller may bind it to separately fresh HH identity.
+    const filter = url.searchParams.get("filter");
+    if (
+      Array.isArray(topics) &&
+      topics.length === 0 &&
+      history &&
+      data.userId === undefined &&
+      filter !== null &&
+      ["active", "archived", "deleted"].includes(filter) &&
+      url.search === `?filter=${filter}&page=0` &&
+      history.filterInUse === filter &&
+      history.total === 0 &&
+      [0, 1].includes(Number(history.pageCount)) &&
+      record(history.paging) &&
+      record(history.paging.next) &&
+      history.paging.next.disabled === true
+    ) {
+      return result(null, "history_identity_missing", true);
+    }
     if (!Array.isArray(topics) || !topics.length || topics.length > 1000) {
       return result(null, "history_identity_missing");
     }

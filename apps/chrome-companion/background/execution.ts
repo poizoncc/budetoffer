@@ -120,7 +120,11 @@ export function createChromeExecution(
     }
     return { value: response[0].result, documentId: response[0].documentId };
   }
-  async function historyIdentity(tabId: number, documentId?: string) {
+  async function historyIdentity(
+    tabId: number,
+    documentId?: string,
+    allowEmpty = false,
+  ) {
     const observed = await inject(
       tabId,
       readHistoryAccountIdentity,
@@ -129,6 +133,13 @@ export function createChromeExecution(
     );
     const value = observed.value;
     if (!isRecord(value)) throw new Error("hh_read_failed");
+    if (
+      allowEmpty &&
+      value.accountKey === null &&
+      value.emptyHistoryPage === true
+    ) {
+      return { value: null, documentId: observed.documentId, empty: true };
+    }
     if (typeof value.accountKey !== "string" || !value.accountKey) {
       const safe = new Set([
         "history_target_mismatch",
@@ -144,7 +155,11 @@ export function createChromeExecution(
           : "hh_read_failed",
       );
     }
-    return { value: value.accountKey, documentId: observed.documentId };
+    return {
+      value: value.accountKey,
+      documentId: observed.documentId,
+      empty: false,
+    };
   }
   async function loaded(
     tabId: number,
@@ -441,10 +456,19 @@ export function createChromeExecution(
     }
     return withOwnedTab(initialUrl, async (tabId, navigate) => {
       let currentUrl = initialUrl;
+      const freshSessionIdentity = () =>
+        withOwnedTab(HH + "/", async (identityTab) => {
+          await loaded(identityTab, HH + "/", job);
+          return (await inject(identityTab, readVerifiedAccountIdentity, []))
+            .value;
+        });
       async function read<Result>(
         url: string,
         operation: string | undefined,
-        run: (documentId?: string) => Promise<Result>,
+        run: (
+          documentId?: string,
+          sessionVerifiedEmpty?: boolean,
+        ) => Promise<Result>,
       ): Promise<Result> {
         if (Date.parse(job.expiresAt) <= Date.now()) {
           throw new Error("lease_expired");
@@ -456,21 +480,42 @@ export function createChromeExecution(
           currentUrl = url;
         }
         await loaded(tabId, url, job, previousUrl);
+        let sessionVerifiedEmpty = false;
         let before = await inject(tabId, readVerifiedAccountIdentity, []);
         if (!before.value && operation === "history") {
-          before = await historyIdentity(tabId, before.documentId);
+          const history = await historyIdentity(
+            tabId,
+            before.documentId,
+            p.kind === "read_hh_history",
+          );
+          sessionVerifiedEmpty = history.empty;
+          before = {
+            value: history.empty ? await freshSessionIdentity() : history.value,
+            documentId: history.documentId,
+          };
         }
         if (!accountMatches(job.hhAccountKey, before.value)) {
           throw new Error("account_identity_unverified");
         }
-        const result = await run(before.documentId);
+        const result = await run(before.documentId, sessionVerifiedEmpty);
         let after = await inject(
           tabId,
           readVerifiedAccountIdentity,
           [],
           before.documentId,
         );
-        if (!after.value && operation === "history") {
+        if (sessionVerifiedEmpty) {
+          const empty = await historyIdentity(tabId, before.documentId, true);
+          if (!empty.empty) throw new Error("incomplete_history_page");
+          const currentAccount = await freshSessionIdentity();
+          const unchanged = await historyIdentity(
+            tabId,
+            before.documentId,
+            true,
+          );
+          if (!unchanged.empty) throw new Error("incomplete_history_page");
+          after = { value: currentAccount, documentId: unchanged.documentId };
+        } else if (!after.value && operation === "history") {
           after = await historyIdentity(tabId, before.documentId);
         }
         if (!accountMatches(job.hhAccountKey, after.value)) {
@@ -692,7 +737,7 @@ export function createChromeExecution(
             const data = await read(
               `${HH}/applicant/negotiations?filter=${filter}&page=${page}`,
               "history",
-              async (documentId) =>
+              async (documentId, sessionVerifiedEmpty) =>
                 (
                   await inject(
                     tabId,
@@ -703,6 +748,7 @@ export function createChromeExecution(
                         page,
                         hhAccountKey: job.hhAccountKey,
                         observedAt,
+                        sessionVerifiedEmpty,
                       },
                     ],
                     documentId,

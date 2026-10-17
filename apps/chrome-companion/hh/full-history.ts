@@ -5,6 +5,7 @@ export interface FullHistoryRequest {
   page: number;
   hhAccountKey: string;
   observedAt: string;
+  sessionVerifiedEmpty?: boolean;
 }
 export interface FullHistoryPage {
   observations: FullHistoryObservation[];
@@ -87,13 +88,25 @@ export function readFullHistoryPage(
   const owner = request.hhAccountKey?.match(
     /^hh-applicant-([1-9]\d{0,30})$/u,
   )?.[1];
+  // The caller verifies a fresh authenticated homepage before and after this
+  // exact empty document. This exception never produces private row evidence.
+  const checkedEmpty =
+    request.sessionVerifiedEmpty === true &&
+    request.page === 0 &&
+    state.userId === undefined &&
+    data.topicList.length === 0 &&
+    data.total === 0 &&
+    [0, 1].includes(Number(data.pageCount)) &&
+    record(data.paging) &&
+    record(data.paging.next) &&
+    data.paging.next.disabled === true;
   if (
     !owner ||
     (state.userId !== undefined && numeric(state.userId) !== owner) ||
     data.topicList.some(
       (row: unknown) => !record(row) || numeric(row.applicantUserId) !== owner,
     ) ||
-    (!data.topicList.length && numeric(state.userId) !== owner)
+    (!data.topicList.length && numeric(state.userId) !== owner && !checkedEmpty)
   ) {
     fail("account_identity_unverified");
   }
