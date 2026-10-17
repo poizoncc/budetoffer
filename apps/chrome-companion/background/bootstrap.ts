@@ -479,17 +479,51 @@ export function installPairedCompanion(
           "chairs:disconnect-device",
           "chairs:start-device-login",
           "chairs:accept-onboarding",
+          "chairs:cabinet-start-login",
+          "chairs:cabinet-login-status",
         ].includes(message.type)
       ) {
         return false;
       }
+      const cabinetCommand =
+        message.type === "chairs:cabinet-start-login" ||
+        message.type === "chairs:cabinet-login-status";
+      let cabinetOrigin: string | null = null;
+      try {
+        const url = new URL(sender.url ?? "");
+        if (ORIGINS.has(url.origin) && url.pathname === "/profile")
+          cabinetOrigin = url.origin;
+      } catch {}
       if (
         sender.id !== chromeApi.runtime.id ||
-        sender.url !== chromeApi.runtime.getURL("popup/index.html")
+        (cabinetCommand
+          ? !cabinetOrigin
+          : sender.url !== chromeApi.runtime.getURL("popup/index.html"))
       ) {
         return false;
       }
       const action = async () => {
+        if (cabinetCommand) {
+          await ready;
+          if (
+            message.type === "chairs:cabinet-start-login" &&
+            !valid(await read())
+          )
+            await startLogin({
+              origin: cabinetOrigin,
+              label: "Chrome — подключён из кабинета",
+            });
+          if (message.type === "chairs:cabinet-login-status") await pollLogin();
+          const summary = await status(),
+            device = await read();
+          // Never return the access token or deviceCode to a web document.
+          return {
+            paired: summary.paired,
+            deviceId: valid(device) ? device.deviceId : null,
+            userCode: summary.pendingLogin?.userCode ?? null,
+            onboardingRequired: summary.onboardingRequired,
+          };
+        }
         if (message.type === "chairs:pair-device") {
           return pair({
             origin: message.origin,

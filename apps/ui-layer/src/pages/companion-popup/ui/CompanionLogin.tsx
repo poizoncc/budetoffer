@@ -251,10 +251,23 @@ export function CompanionLogin({
       ) : (
         <div className="companion-section space-y-3">
           <p className="text-sm">
-            Получите код здесь и подтвердите его в кабинете — пароль в
-            расширение вводить не нужно.
+            Откройте кабинет в этом Chrome и нажмите «Подключить расширение».
+            Если вы уже вошли в кабинет, пароль и ручной код не понадобятся.
           </p>
           <Button
+            className="w-full"
+            disabled={busy}
+            onClick={() =>
+              onOpen(
+                `${config.origin}/profile?view=connections#companion-devices`,
+              )
+            }
+          >
+            Подключить через кабинет
+            <ArrowUpRight className="size-4" aria-hidden="true" />
+          </Button>
+          <Button
+            variant="secondary"
             className="w-full"
             disabled={busy}
             loading={busy}

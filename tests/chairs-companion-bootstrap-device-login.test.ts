@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { COMPANION_ORIGINS } from "../apps/chrome-companion/shared/destinations.ts";
 import { test } from "node:test";
 import { installPairedCompanion } from "../apps/chrome-companion/background/bootstrap.ts";
 import {
@@ -16,7 +15,7 @@ import type {
 import { isRecord } from "../apps/chrome-companion/shared/record.ts";
 import { unavailableExecutionChrome } from "./helpers/chrome.ts";
 
-const ORIGIN = COMPANION_ORIGINS[0];
+const ORIGIN = "https://my.budetoffer.ru";
 const DEVICE_KEY = "chairs-companion-device-v1";
 const CHECKPOINT_KEY = "chairs-companion-checkpoint-v1";
 const legal = {
@@ -44,6 +43,7 @@ function fixture() {
   const requests: { url: string; options: RequestInit }[] = [];
   let onAlarm: ((alarm: { name: string }) => void) | undefined;
   let onStartup: (() => void) | undefined;
+  let onInstalled: (() => void) | undefined;
   let onMessage: CompanionMessageListener | undefined;
   let approved = false;
   let offline = false;
@@ -96,7 +96,11 @@ function fixture() {
           onStartup = value;
         },
       },
-      onInstalled: { addListener() {} },
+      onInstalled: {
+        addListener(value: () => void) {
+          onInstalled = value;
+        },
+      },
       onMessage: {
         addListener(value: CompanionMessageListener) {
           onMessage = value;
@@ -196,6 +200,10 @@ function fixture() {
       assert.ok(onStartup);
       onStartup();
     },
+    update() {
+      assert.ok(onInstalled);
+      onInstalled();
+    },
     message(message: unknown, sender: { id?: string; url?: string } = trusted) {
       return new Promise<Record<string, unknown>>((resolve, reject) => {
         assert.ok(onMessage);
@@ -212,6 +220,71 @@ function fixture() {
   };
 }
 
+test("cabinet reconnect accepts only packaged same-origin profile messages and never returns credentials", async () => {
+  const f = fixture();
+  f.install();
+  await flush();
+  for (const sender of [
+    { id: "trusted-extension", url: "https://evil.example/profile" },
+    { id: "trusted-extension", url: "https://hh.ru/profile" },
+    { id: "other-extension", url: `${ORIGIN}/profile` },
+    { id: "trusted-extension", url: `${ORIGIN}/queue` },
+  ])
+    await assert.rejects(
+      f.message({ type: "chairs:cabinet-start-login" }, sender),
+      /untrusted_message/u,
+    );
+  const sender = {
+    id: "trusted-extension",
+    url: `${ORIGIN}/profile?view=connections`,
+  };
+  const pending = await f.message(
+    { type: "chairs:cabinet-start-login" },
+    sender,
+  );
+  assert.equal(pending.userCode, "4GN-5TY");
+  assert.equal(pending.paired, false);
+  assert.ok(!JSON.stringify(pending).includes("d".repeat(43)));
+  f.approve();
+  f.advance(30000);
+  const connected = await f.message(
+    { type: "chairs:cabinet-login-status" },
+    sender,
+  );
+  assert.equal(connected.paired, true);
+  assert.equal(connected.deviceId, "device-first");
+  assert.equal(connected.onboardingRequired, true);
+  assert.ok(!JSON.stringify(connected).includes("a".repeat(43)));
+  const starts = f.requests.filter((r) =>
+    r.url.endsWith("/device-login/start"),
+  ).length;
+  await f.message({ type: "chairs:cabinet-start-login" }, sender);
+  assert.equal(
+    f.requests.filter((r) => r.url.endsWith("/device-login/start")).length,
+    starts,
+  );
+});
+test("extension update retains a live device, accepted agreements and checkpoints without asking for login", async () => {
+  const f = fixture(),
+    worker = f.install();
+  await flush();
+  await worker.startLogin({ origin: ORIGIN, label: "Synthetic Chrome" });
+  f.approve();
+  f.advance(30000);
+  await worker.pollLogin();
+  await worker.acceptOnboarding(agreements);
+  const device = structuredClone(f.stored(DEVICE_KEY)),
+    consent = structuredClone(f.stored(ONBOARDING_KEY));
+  f.update();
+  await flush();
+  assert.deepEqual(f.stored(DEVICE_KEY), device);
+  assert.deepEqual(f.stored(ONBOARDING_KEY), consent);
+  assert.equal((await worker.status()).onboardingRequired, false);
+  assert.equal(
+    f.requests.filter((r) => r.url.endsWith("/device-login/start")).length,
+    1,
+  );
+});
 test("device login completes on an alarm without a popup, but cannot start HH work before all agreements", async () => {
   const f = fixture();
   const worker = f.install();
