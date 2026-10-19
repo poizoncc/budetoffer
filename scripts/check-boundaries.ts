@@ -252,6 +252,8 @@ const SERIALIZED: readonly SerializedEntry[] = [
     name: "readHistoryAccountIdentity",
   },
   { file: `${COMPANION}hh/actions.ts`, name: "readPageEvidence" },
+  { file: `${COMPANION}hh/resume-catalog.ts`, name: "readResumeCatalogPage" },
+  { file: `${COMPANION}hh/resume-catalog.ts`, name: "readOwnedResumeFullText" },
   { file: `${COMPANION}hh/outcomes.ts`, name: "readApplicationOutcomesPage" },
   { file: `${COMPANION}hh/full-history.ts`, name: "readFullHistoryPage" },
   { file: `${COMPANION}hh/chat-snapshot.ts`, name: "readChatSnapshot" },

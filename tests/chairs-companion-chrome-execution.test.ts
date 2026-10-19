@@ -7,6 +7,10 @@ import { readFullHistoryPage } from "../apps/chrome-companion/hh/full-history.ts
 import { readChatSnapshot } from "../apps/chrome-companion/hh/chat-snapshot.ts";
 import { MAX_HISTORY_PAGES } from "../apps/chrome-companion/hh/history-limits.ts";
 import { readPageEvidence } from "../apps/chrome-companion/hh/actions.ts";
+import {
+  readResumeCatalogPage,
+  readOwnedResumeFullText,
+} from "../apps/chrome-companion/hh/resume-catalog.ts";
 import type {
   CompanionJob,
   JobPayloads,
@@ -1771,6 +1775,189 @@ test("profile reads only explicit resume identities; CV import remains unsupport
     assert.equal(unsupported.evidence.reasonCode, "profile_text_not_supported");
   } finally {
     chrome.close();
+  }
+});
+test("serialized resume inventory reads published and draft cards, and refuses foreign links or uncertain empty pages", () => {
+  const body =
+    '<main><div data-qa="resume"><a data-qa="resume-card-link-resume-one" href="/resume/resume-one?hhtmFrom=profile"><span data-qa="resume-title">First role</span></a></div><div data-qa="resume"><button data-qa="resume-card-link-resume-draft"><span data-qa="resume-title">Draft role</span></button></div></main>';
+  const dom = new JSDOM(html({ userId: undefined }, body), {
+    url: "https://kaliningrad.hh.ru/applicant/profile/me",
+    runScripts: "outside-only",
+  });
+  try {
+    const read = () =>
+      runSerialized(dom, readResumeCatalogPage, [
+        { hhAccountKey: "hh-applicant-101" },
+      ]);
+    assert.deepEqual(JSON.parse(JSON.stringify(read())), [
+      { resumeId: "resume-one", title: "First role" },
+      { resumeId: "resume-draft", title: "Draft role" },
+    ]);
+    dom.window.document.querySelector("a")!.href =
+      "https://evil.test/resume/resume-one";
+    assert.throws(read, /resume_catalog_unavailable/);
+    dom.window.document.querySelector("main")!.innerHTML = "";
+    assert.throws(read, /resume_catalog_unavailable/);
+    dom.window.document.querySelector("main")!.innerHTML =
+      '<div data-qa="resume-list-empty"></div>';
+    assert.equal(read().length, 0);
+    dom.reconfigure({ url: "https://hh.ru.evil.test/applicant/profile/me" });
+    assert.throws(read, /resume_catalog_unavailable/);
+  } finally {
+    dom.window.close();
+  }
+});
+const catalogPage = (url: string, unavailable = false) => {
+  const path = new URL(url).pathname;
+  if (path === "/applicant/profile/me") {
+    return html(
+      { userId: undefined },
+      '<main><div data-qa="resume"><a data-qa="resume-card-link-resume-one" href="/resume/resume-one"><span data-qa="resume-title">First role</span></a></div><div data-qa="resume"><button data-qa="resume-card-link-resume-draft"><span data-qa="resume-title">Draft role</span></button></div></main>',
+    );
+  }
+  if (!path.startsWith("/resume/")) return html();
+  const id = path.slice("/resume/".length);
+  const title = id === "resume-one" ? "First role" : "Draft role";
+  return html(
+    {
+      applicantResume: {
+        forbidden: unavailable && id === "resume-draft" ? "denied" : null,
+        applicantUserStatuses: { "101": { jobSearchStatus: "active" } },
+        _attributes: {
+          id: id === "resume-one" ? "42" : "43",
+          hash: id,
+          user: "101",
+          permission: "edit",
+        },
+      },
+    },
+    `<nav>Outside navigation</nav><main><h1 data-qa="resume-block-title-position">${title}</h1><section><h2>Опыт работы</h2><p>Разработка приложений</p></section><section><h2>Образование</h2><p>Демонстрационный университет</p></section><p>Языки: английский</p><p>Контакт: demo@example.test</p><aside>Recommendation</aside><button>Изменить</button><script>private_token</script><span hidden>Hidden text</span></main>`,
+  );
+};
+test("full CV reader includes experience, education and contacts without requiring optional About or Skills fields", () => {
+  const dom = new JSDOM(catalogPage("https://hh.ru/resume/resume-one"), {
+    url: "https://kaliningrad.hh.ru/resume/resume-one",
+    runScripts: "outside-only",
+  });
+  try {
+    const read = () =>
+      runSerialized(dom, readOwnedResumeFullText, [
+        {
+          resumeId: "resume-one",
+          internalId: "42",
+          hhAccountKey: "hh-applicant-101",
+        },
+      ]);
+    const result = read();
+    for (const text of [
+      "First role",
+      "Опыт работы",
+      "Разработка приложений",
+      "Образование",
+      "Демонстрационный университет",
+      "Языки: английский",
+      "demo@example.test",
+    ]) {
+      assert.ok(result.fullText.includes(text), text);
+    }
+    for (const text of [
+      "Outside navigation",
+      "Recommendation",
+      "Изменить",
+      "private_token",
+      "Hidden text",
+    ]) {
+      assert.ok(!result.fullText.includes(text), text);
+    }
+    const node = dom.window.document.querySelector("template")!;
+    const state = JSON.parse(node.innerHTML);
+    state.applicantResume._attributes.user = "202";
+    node.innerHTML = JSON.stringify(state);
+    assert.throws(read, /resume_full_profile_unavailable/);
+  } finally {
+    dom.window.close();
+  }
+});
+test("catalog reads every owned resume in regional HH, including drafts, without changing a user tab", async () => {
+  const chrome = browser(catalogPage, (url) =>
+    url.replace("https://hh.ru/", "https://kaliningrad.hh.ru/"),
+  );
+  try {
+    const receipt = await createChromeExecution(chrome.api, null, {
+      load: async () => null,
+    }).execute(
+      job({
+        kind: "read_profile",
+        includeResumeIds: [],
+        includeProfileText: true,
+      }),
+    );
+    assert.equal(receipt.outcome, "confirmed", receipt.evidence.reasonCode);
+    assert.ok(
+      receipt.result?.kind === "read_profile" &&
+        "readerVersion" in receipt.result,
+    );
+    assert.equal(receipt.result.readerVersion, "hh-owned-resume-catalog-v1");
+    assert.equal(receipt.result.complete, true);
+    assert.equal(receipt.result.total, 2);
+    assert.deepEqual(
+      receipt.result.resumes.map((row) => row.resumeId),
+      ["resume-one", "resume-draft"],
+    );
+    for (const row of receipt.result.resumes) {
+      assert.ok(row.fullText.includes("Образование"));
+    }
+    assert.equal(chrome.tabs.size, 1);
+    assert.ok(chrome.tabs.has(1));
+  } finally {
+    chrome.close();
+  }
+});
+test("unavailable resumes preserve other full texts, while an account change discards the catalog", async () => {
+  for (const changedAccount of [false, true]) {
+    const chrome = browser((url) => catalogPage(url, !changedAccount));
+    if (changedAccount) {
+      chrome.afterRead((dom) => {
+        if (dom.window.location.pathname.endsWith("resume-draft")) {
+          const node = dom.window.document.querySelector("template")!;
+          const state = JSON.parse(node.innerHTML);
+          state.userId = "202";
+          node.innerHTML = JSON.stringify(state);
+        }
+      });
+    }
+    try {
+      const receipt = await createChromeExecution(chrome.api, null, {
+        load: async () => null,
+      }).execute(
+        job({
+          kind: "read_profile",
+          includeResumeIds: [],
+          includeProfileText: true,
+        }),
+      );
+      if (changedAccount) {
+        assert.equal(receipt.result, undefined);
+        assert.equal(receipt.evidence.reasonCode, "account_changed");
+      } else {
+        assert.ok(
+          receipt.result?.kind === "read_profile" &&
+            "readerVersion" in receipt.result,
+        );
+        assert.equal(receipt.result.complete, false);
+        assert.equal(receipt.result.total, 2);
+        assert.equal(receipt.result.resumes.length, 1);
+        assert.deepEqual(receipt.result.unavailable, [
+          {
+            resumeId: "resume-draft",
+            title: "Draft role",
+            reasonCode: "resume_unavailable",
+          },
+        ]);
+      }
+    } finally {
+      chrome.close();
+    }
   }
 });
 test("profile verification follows the same resume on a regional HH host and closes only its own tab", async () => {

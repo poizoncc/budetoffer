@@ -64,7 +64,11 @@ export async function executeJob(
   if (["apply_vacancy", "publish_resume_variant"].includes(job.kind)) {
     return blockedReceipt(job, "resume_ownership_unverified");
   }
-  if (job.kind === "read_profile" && job.payload.includeProfileText) {
+  if (
+    job.kind === "read_profile" &&
+    job.payload.includeProfileText &&
+    job.payload.includeResumeIds.length !== 0
+  ) {
     return blockedReceipt(job, "profile_text_not_supported");
   }
   if (!readJob) return blockedReceipt(job, "read_executor_unavailable");
@@ -123,6 +127,7 @@ export async function executeJob(
       "hh_page_timeout",
       "hh_tab_suspended",
       "invalid_read_payload",
+      "resume_catalog_unavailable",
       "executor_busy",
     ]);
     const message = errorMessage(error);

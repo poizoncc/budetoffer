@@ -1,4 +1,5 @@
 import { isRecord } from "./record.ts";
+import type { ResumeCatalogResult } from "../hh/resume-catalog.ts";
 
 /** Contracts shared by the packaged worker, its local outbox and HH adapters. */
 export type JsonValue =
@@ -173,6 +174,7 @@ export interface CapturedConversation extends CorrespondenceTarget {
   reason: string | null;
 }
 export type JobResult =
+  | ResumeCatalogResult
   | {
       kind: "read_hh_correspondence";
       readerVersion: "hh-chat-dom-v1";

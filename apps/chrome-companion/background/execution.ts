@@ -11,6 +11,11 @@ import { readFullHistoryPage } from "../hh/full-history.ts";
 import { readChatSnapshot } from "../hh/chat-snapshot.ts";
 import { MAX_HISTORY_PAGES } from "../hh/history-limits.ts";
 import { readPublicationResumeArtifacts } from "./publication.ts";
+import {
+  readResumeCatalogPage,
+  readOwnedResumeFullText,
+  type ResumeCatalogResult,
+} from "../hh/resume-catalog.ts";
 import { executeJob, blockedReceipt } from "../hh/executor.ts";
 import { requireRunnableTab } from "./tab-state.ts";
 import { isRecord } from "../shared/record.ts";
@@ -520,9 +525,13 @@ export function createChromeExecution(
         initialUrl = `${HH}/vacancy/${p.vacancyId}`;
         break;
       case "read_profile":
-        initialUrl = p.includeResumeIds.length
-          ? `${HH}/resume/${p.includeResumeIds[0]}`
-          : HH + "/";
+        if (p.includeProfileText && !p.includeResumeIds.length) {
+          initialUrl = `${HH}/applicant/profile/me`;
+        } else {
+          initialUrl = p.includeResumeIds.length
+            ? `${HH}/resume/${p.includeResumeIds[0]}`
+            : HH + "/";
+        }
         break;
       default:
         initialUrl = `${HH}/resume/${p.resumeId}`;
@@ -562,6 +571,14 @@ export function createChromeExecution(
           await loaded(tabId, url, job, previousUrl);
           let sessionVerifiedEmpty = false;
           let before = await inject(tabId, readVerifiedAccountIdentity, []);
+          const catalogSession =
+            !before.value && operation === "resume-catalog";
+          if (catalogSession) {
+            before = {
+              value: await freshSessionIdentity(),
+              documentId: before.documentId,
+            };
+          }
           if (!before.value && operation === "history") {
             const history = await historyIdentity(
               tabId,
@@ -587,6 +604,12 @@ export function createChromeExecution(
             [],
             before.documentId,
           );
+          if (catalogSession) {
+            after = {
+              value: await freshSessionIdentity(),
+              documentId: after.documentId,
+            };
+          }
           if (sessionVerifiedEmpty) {
             const empty = await historyIdentity(tabId, before.documentId, true);
             if (!empty.empty) throw new Error("incomplete_history_page");
@@ -800,6 +823,94 @@ export function createChromeExecution(
           };
         }
         if (p.kind === "read_profile") {
+          if (p.includeProfileText && !p.includeResumeIds.length) {
+            const entries = await read(
+              initialUrl,
+              "resume-catalog",
+              async (documentId) =>
+                (
+                  await inject(
+                    tabId,
+                    readResumeCatalogPage,
+                    [{ hhAccountKey: job.hhAccountKey }],
+                    documentId,
+                  )
+                ).value,
+            );
+            const result: ResumeCatalogResult = {
+              kind: "read_profile",
+              readerVersion: "hh-owned-resume-catalog-v1",
+              total: entries.length,
+              complete: true,
+              resumes: [],
+              unavailable: [],
+            };
+            let textLength = 0;
+            for (const entry of entries) {
+              try {
+                const owned = await resumeRead(
+                  `${HH}/resume/${entry.resumeId}`,
+                  entry.resumeId,
+                );
+                const artifact = await read(
+                  `${HH}/resume/${entry.resumeId}`,
+                  undefined,
+                  async (documentId) =>
+                    (
+                      await inject(
+                        tabId,
+                        readOwnedResumeFullText,
+                        [{ ...owned, hhAccountKey: job.hhAccountKey }],
+                        documentId,
+                      )
+                    ).value,
+                );
+                if (!artifact.fullText?.trim()) {
+                  throw Error("resume_full_profile_unavailable");
+                }
+                if (textLength + artifact.fullText.length > 600000) {
+                  result.unavailable.push({
+                    ...entry,
+                    reasonCode: "resume_text_budget_exceeded",
+                  });
+                } else {
+                  textLength += artifact.fullText.length;
+                  result.resumes.push({
+                    ...owned,
+                    title: artifact.title,
+                    fullText: artifact.fullText,
+                  });
+                }
+              } catch (error) {
+                const code = error instanceof Error ? error.message : "";
+                if (
+                  [
+                    "account_changed",
+                    "unexpected_hh_navigation",
+                    "lease_expired",
+                    "lease_renewal_failed",
+                    "hh_tab_suspended",
+                  ].includes(code)
+                ) {
+                  throw error;
+                }
+                if (
+                  !accountMatches(
+                    job.hhAccountKey,
+                    await freshSessionIdentity(),
+                  )
+                ) {
+                  throw Error("account_changed");
+                }
+                result.unavailable.push({
+                  ...entry,
+                  reasonCode: "resume_unavailable",
+                });
+              }
+            }
+            result.complete = result.unavailable.length === 0;
+            return result;
+          }
           const resumes: ResumeEvidence[] = [];
           for (const resumeId of new Set(p.includeResumeIds)) {
             resumes.push(
