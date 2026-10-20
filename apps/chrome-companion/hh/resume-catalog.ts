@@ -124,11 +124,11 @@ export function readResumeCatalogPage(
 
 /** Full CV reading does not require optional About or Skills sections. The
  * publication projection remains stricter for fields that it may edit. */
-export function readOwnedResumeFullText(
+export async function readOwnedResumeFullText(
   request: { resumeId: string; internalId: string; hhAccountKey: string },
   documentRef: Document = globalThis.document,
   locationHref: string = globalThis.location?.href,
-): { title: string; fullText: string } {
+): Promise<{ title: string; fullText: string }> {
   function fail(): never {
     throw Error("resume_full_profile_unavailable");
   }
@@ -190,6 +190,115 @@ export function readOwnedResumeFullText(
     !root ||
     root === documentRef.body ||
     root === documentRef.documentElement
+  ) {
+    fail();
+  }
+  // HH initially mounts only the recent jobs. Expanding its read-only history
+  // controls in our owned tab is necessary before collecting the CV text.
+  const historyHeading = Array.from(root.querySelectorAll("h2,h3,h4")).find(
+    (node) =>
+      /^(?:опыт(?:\s+работы)?|(?:work\s+)?experience)(?:\s|[:：]|$)/iu.test(
+        node.textContent?.trim() ?? "",
+      ),
+  );
+  const historyBlock = root.querySelector(
+    '[data-qa="resume-block-experience"],[data-qa="resume-experience-card"]',
+  );
+  const normalize = (value: string | null) =>
+    (value ?? "").replace(/\s+/gu, " ").trim();
+  const expansion =
+    /^(?:развернуть|показать\s+(?:ещ[её]|вс[её]|весь\s+опыт(?:\s+работы)?|все\s+места\s+работы)|(?:показать\s+)?ещ[её]\s+\d+\s+мест(?:о|а)?(?:\s+работы)?|show\s+(?:more|all)(?:\s+(?:experience|jobs))?)(?:\s*[.…]+)?$/iu;
+  const explicitHistory =
+    /(?:мест(?:о|а)?\s+работы|весь\s+опыт|all\s+(?:experience|jobs))/iu;
+  const controls = (scope: Element) =>
+    Array.from(
+      scope.querySelectorAll<HTMLElement>('button,a,[role="button"],span'),
+    ).filter(
+      (node) =>
+        expansion.test(normalize(node.textContent)) &&
+        !node.closest('[hidden],[aria-hidden="true"]') &&
+        !node.hasAttribute("disabled") &&
+        node.getAttribute("aria-disabled") !== "true",
+    );
+  const deadline = Date.now() + 10000;
+  const clicked = new Set<Element>();
+  if (historyHeading || historyBlock) {
+    for (let count = 0; count < 100; count++) {
+      let control = controls(root).find(
+        (node) =>
+          explicitHistory.test(normalize(node.textContent)) &&
+          !clicked.has(node),
+      );
+      // Generic “Expand” controls are limited to the experience block, never
+      // neighbouring sections, resume editing, applications or account actions.
+      for (
+        let scope = historyBlock ?? historyHeading?.parentElement;
+        !control && scope && scope !== root;
+        scope = scope.parentElement
+      ) {
+        if (
+          Array.from(scope.querySelectorAll("h2,h3,h4")).some(
+            (node) =>
+              node !== historyHeading &&
+              /^(?:образование|навыки|о\s+себе|education|skills|about)(?:\s|[:：]|$)/iu.test(
+                normalize(node.textContent),
+              ),
+          )
+        ) {
+          break;
+        }
+        control = controls(scope).find((node) => !clicked.has(node));
+      }
+      if (!control) {
+        break;
+      }
+      if (Date.now() >= deadline) {
+        fail();
+      }
+      const before = root.textContent ?? "";
+      const jobControl = explicitHistory.test(normalize(control.textContent));
+      clicked.add(control);
+      control.click();
+      let previous = root.textContent ?? "";
+      let stableSince = Date.now();
+      let changed = previous !== before;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        if (!root.isConnected || documentRef.location.href !== locationHref) {
+          fail();
+        }
+        const current = root.textContent ?? "";
+        if (current !== previous) {
+          previous = current;
+          stableSince = Date.now();
+          changed = true;
+        }
+        if (
+          (!jobControl || changed) &&
+          Date.now() - stableSince >= 300 &&
+          !root.querySelector('[aria-busy="true"],[role="progressbar"]')
+        ) {
+          break;
+        }
+      }
+      if (
+        Date.now() >= deadline ||
+        (expansion.test(normalize(control.textContent)) && control.isConnected)
+      ) {
+        fail();
+      }
+    }
+  }
+  if (
+    (historyHeading || historyBlock) &&
+    controls(root).some((node) =>
+      explicitHistory.test(normalize(node.textContent)),
+    )
+  ) {
+    fail();
+  }
+  if (
+    documentRef.querySelector("template#HH-Lux-InitialState")?.innerHTML !== raw
   ) {
     fail();
   }

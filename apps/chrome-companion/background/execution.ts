@@ -687,25 +687,31 @@ export function createChromeExecution(
         if (p.kind === "read_resume_artifact") {
           return {
             kind: p.kind,
-            artifact: await read(
-              initialUrl,
-              undefined,
-              async (documentId) =>
-                (
-                  await inject(
-                    tabId,
-                    readPublicationResumeArtifacts,
-                    [
-                      {
-                        resumeId: p.resumeId,
-                        internalId: p.internalId,
-                        hhAccountKey: job.hhAccountKey,
-                      },
-                    ],
-                    documentId,
-                  )
-                ).value,
-            ),
+            artifact: await read(initialUrl, undefined, async (documentId) => {
+              const request = {
+                resumeId: p.resumeId,
+                internalId: p.internalId,
+                hhAccountKey: job.hhAccountKey,
+              };
+              const artifact = (
+                await inject(
+                  tabId,
+                  readPublicationResumeArtifacts,
+                  [request],
+                  documentId,
+                )
+              ).value;
+              if (!artifact.fullText) return artifact;
+              const complete = (
+                await inject(
+                  tabId,
+                  readOwnedResumeFullText,
+                  [request],
+                  documentId,
+                )
+              ).value;
+              return { ...artifact, fullText: complete.fullText };
+            }),
           };
         }
         if (p.kind === "discover_search") {

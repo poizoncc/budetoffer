@@ -1834,7 +1834,7 @@ const catalogPage = (url: string, unavailable = false) => {
     `<nav>Outside navigation</nav><main><h1 data-qa="resume-block-title-position">${title}</h1><section><h2>Опыт работы</h2><p>Разработка приложений</p></section><section><h2>Образование</h2><p>Демонстрационный университет</p></section><p>Языки: английский</p><p>Контакт: demo@example.test</p><aside>Recommendation</aside><button>Изменить</button><script>private_token</script><span hidden>Hidden text</span></main>`,
   );
 };
-test("full CV reader includes experience, education and contacts without requiring optional About or Skills fields", () => {
+test("full CV reader includes experience, education and contacts without requiring optional About or Skills fields", async () => {
   const dom = new JSDOM(catalogPage("https://hh.ru/resume/resume-one"), {
     url: "https://kaliningrad.hh.ru/resume/resume-one",
     runScripts: "outside-only",
@@ -1848,7 +1848,7 @@ test("full CV reader includes experience, education and contacts without requiri
           hhAccountKey: "hh-applicant-101",
         },
       ]);
-    const result = read();
+    const result = await read();
     for (const text of [
       "First role",
       "Опыт работы",
@@ -1873,9 +1873,114 @@ test("full CV reader includes experience, education and contacts without requiri
     const state = JSON.parse(node.innerHTML);
     state.applicantResume._attributes.user = "202";
     node.innerHTML = JSON.stringify(state);
-    assert.throws(read, /resume_full_profile_unavailable/);
+    await assert.rejects(read, /resume_full_profile_unavailable/);
   } finally {
     dom.window.close();
+  }
+});
+test("full CV reader expands older jobs and descriptions inside the owned experience block before reading", async () => {
+  const dom = new JSDOM(catalogPage("https://hh.ru/resume/resume-one"), {
+    url: "https://hh.ru/resume/resume-one",
+    runScripts: "outside-only",
+  });
+  try {
+    const root = dom.window.document.querySelector("main")!;
+    const history = root.querySelector("section")!;
+    history.setAttribute("data-qa", "resume-block-experience");
+    history.innerHTML =
+      "<h2>Опыт работы: 18 лет 4 месяца</h2><p>Демо-компания 1</p><p>Описание первого места.</p><p>Демо-компания 2</p><p>Демо-компания 3</p><button><span>Ещё 7 мест работы</span></button>";
+    const control = history.querySelector("button")!;
+    control.addEventListener("click", () => {
+      control.disabled = true;
+      history.setAttribute("aria-busy", "true");
+      dom.window.setTimeout(() => {
+        for (let i = 4; i <= 10; i++) {
+          const entry = dom.window.document.createElement("p");
+          entry.textContent = `Демо-компания ${i}: полный опыт ${i}`;
+          history.append(entry);
+        }
+        history.removeAttribute("aria-busy");
+        control.remove();
+      }, 80);
+    });
+    const descriptionControl = dom.window.document.createElement("button");
+    descriptionControl.textContent = "Развернуть";
+    history.append(descriptionControl);
+    descriptionControl.addEventListener("click", () => {
+      const tail = dom.window.document.createElement("p");
+      tail.textContent = "Последний абзац полного описания сохранён.";
+      history.append(tail);
+      descriptionControl.remove();
+    });
+    const about = dom.window.document.createElement("section");
+    about.innerHTML =
+      "<h2>О себе</h2><button>Развернуть</button><button>Откликнуться</button>";
+    let foreignClicks = 0;
+    about
+      .querySelectorAll("button")
+      .forEach((button) =>
+        button.addEventListener("click", () => foreignClicks++),
+      );
+    root.append(about);
+    const result = await runSerialized(dom, readOwnedResumeFullText, [
+      {
+        resumeId: "resume-one",
+        internalId: "42",
+        hhAccountKey: "hh-applicant-101",
+      },
+    ]);
+    for (let i = 1; i <= 10; i++) {
+      assert(result.fullText.includes(`Демо-компания ${i}`));
+    }
+    assert(
+      result.fullText.includes("Последний абзац полного описания сохранён."),
+    );
+    assert.equal(foreignClicks, 0);
+    assert(!result.fullText.includes("Ещё 7 мест работы"));
+  } finally {
+    dom.window.close();
+  }
+});
+test("full CV reader refuses stalled expansion and changed ownership without returning a partial resume", async () => {
+  for (const scenario of ["stalled", "changed-owner", "unverified"] as const) {
+    const dom = new JSDOM(catalogPage("https://hh.ru/resume/resume-one"), {
+      url: "https://hh.ru/resume/resume-one",
+      runScripts: "outside-only",
+    });
+    try {
+      const history = dom.window.document.querySelector("main section")!;
+      history.insertAdjacentHTML("beforeend", "<button>Развернуть</button>");
+      const button = history.querySelector("button")!;
+      const template = dom.window.document.querySelector("template")!;
+      let clicks = 0;
+      const changeOwner = () => {
+        const state = JSON.parse(template.innerHTML);
+        state.applicantResume._attributes.user = "202";
+        template.innerHTML = JSON.stringify(state);
+      };
+      button.addEventListener("click", () => {
+        clicks++;
+        if (scenario === "changed-owner") {
+          button.remove();
+          changeOwner();
+        }
+      });
+      if (scenario === "unverified") changeOwner();
+      await assert.rejects(
+        () =>
+          runSerialized(dom, readOwnedResumeFullText, [
+            {
+              resumeId: "resume-one",
+              internalId: "42",
+              hhAccountKey: "hh-applicant-101",
+            },
+          ]),
+        /resume_full_profile_unavailable/,
+      );
+      assert.equal(clicks, scenario === "unverified" ? 0 : 1);
+    } finally {
+      dom.window.close();
+    }
   }
 });
 test("catalog reads every owned resume in regional HH, including drafts, without changing a user tab", async () => {
